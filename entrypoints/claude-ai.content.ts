@@ -74,6 +74,16 @@ export default defineContentScript({
             if (msg.type === 'HEALTH_BROKEN') {
                 console.warn('[LCO] Health check broken signal received from MAIN world:', msg.message);
             }
+
+            if (msg.type === 'MESSAGE_LIMIT_UPDATE') {
+                browser.runtime.sendMessage({
+                    type: 'STORE_MESSAGE_LIMIT',
+                    platform: msg.platform,
+                    messageLimitUtilization: msg.messageLimitUtilization,
+                }).catch((err) => {
+                    console.error('[LCO-ERROR] Failed to forward message limit to background:', err);
+                });
+            }
         });
 
         // Internal token counting bridge messages (BPE requests from inject.ts)
@@ -86,11 +96,11 @@ export default defineContentScript({
             browser.runtime.sendMessage({ type: 'COUNT_TOKENS', text })
                 .then((response: any) => {
                     const count = response?.count ?? 0;
-                    window.postMessage({ type: 'LCO_TOKEN_RES', id, count }, '*');
+                    window.postMessage({ type: 'LCO_TOKEN_RES', id, count }, window.location.origin);
                 })
                 .catch((err: any) => {
                     console.error('[LCO-ERROR] Content script BPE bridge transmission failed:', err);
-                    window.postMessage({ type: 'LCO_TOKEN_RES', id, count: 0 }, '*');
+                    window.postMessage({ type: 'LCO_TOKEN_RES', id, count: 0 }, window.location.origin);
                 });
         });
     },
@@ -105,8 +115,10 @@ function isValidBridgeSchema(data: any): boolean {
     if (typeof data !== 'object' || data === null) return false;
     if (data.namespace !== LCO_NAMESPACE) return false;
     if (typeof data.token !== 'string' || data.token.length === 0) return false;
-    if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN'].includes(data.type)) return false;
-    if (data.type !== 'HEALTH_BROKEN') {
+    if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'MESSAGE_LIMIT_UPDATE'].includes(data.type)) return false;
+    if (data.type === 'MESSAGE_LIMIT_UPDATE') {
+        if (typeof data.messageLimitUtilization !== 'number') return false;
+    } else if (data.type !== 'HEALTH_BROKEN') {
         if (typeof data.inputTokens !== 'number') return false;
         if (typeof data.outputTokens !== 'number') return false;
         if (typeof data.model !== 'string') return false;
