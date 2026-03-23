@@ -55,7 +55,7 @@ async function writeTabState(
 
   // Read existing session cost to accumulate across multiple requests in the same tab
   const existing = await browser.storage.session.get([costKey]);
-  const prev: SessionCost = existing[costKey] ?? {
+  const prev: SessionCost = (existing[costKey] as SessionCost | undefined) ?? {
     totalInputTokens: 0,
     totalOutputTokens: 0,
     requestCount: 0,
@@ -85,6 +85,25 @@ async function writeTabState(
     [stateKey]: newTabState,
     [costKey]: newCost,
   });
+}
+
+/** Update the existing tabState with the latest message limit utilization */
+async function writeMessageLimit(tabId: number, utilization: number): Promise<void> {
+  const stateKey = tabStateKey(tabId);
+  const existing = await browser.storage.session.get([stateKey]);
+  const currentState: TabState = (existing[stateKey] as TabState | undefined) ?? {
+    platform: 'unknown',
+    model: 'unknown',
+    inputTokens: 0,
+    outputTokens: 0,
+    stopReason: null,
+    updatedAt: Date.now(),
+  };
+
+  currentState.messageLimitUtilization = utilization;
+  currentState.updatedAt = Date.now();
+
+  await browser.storage.session.set({ [stateKey]: currentState });
 }
 
 /** Remove all storage keys associated with a specific tab */
@@ -165,6 +184,21 @@ export default defineBackground({
           });
 
         return true; // Keep channel open for async response
+      }
+
+      // Usage cap utilization from Claude's free-tier message_limit event
+      if (message.type === 'STORE_MESSAGE_LIMIT') {
+        const tabId = sender.tab?.id;
+        if (tabId === undefined) return;
+
+        writeMessageLimit(tabId, message.messageLimitUtilization)
+          .then(() => sendResponse({ ok: true }))
+          .catch((err) => {
+            console.error('[LCO-ERROR] Failed to write message limit to storage:', err);
+            sendResponse({ ok: false });
+          });
+
+        return true;
       }
     });
 
