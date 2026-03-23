@@ -84,8 +84,17 @@ export interface StreamHealthBrokenPayload {
     message: string;
 }
 
+/** Fired when free/Pro usage cap details are received */
+export interface MessageLimitPayload {
+    namespace: typeof LCO_NAMESPACE;
+    type: 'MESSAGE_LIMIT_UPDATE';
+    token: string;
+    platform: string;
+    messageLimitUtilization: number;
+}
+
 /** Union of all valid bridge message types */
-export type LcoBridgeMessage = TokenBatchPayload | StreamCompletePayload | StreamHealthBrokenPayload;
+export type LcoBridgeMessage = TokenBatchPayload | StreamCompletePayload | StreamHealthBrokenPayload | MessageLimitPayload;
 
 // -- Tab Storage Schema (chrome.storage.session) --
 
@@ -96,6 +105,7 @@ export interface TabState {
     inputTokens: number;
     outputTokens: number;
     stopReason: string | null;
+    messageLimitUtilization?: number;
     updatedAt: number;   // Unix timestamp (ms) of last write
 }
 
@@ -126,5 +136,12 @@ export interface StoreTokenBatchMessage {
     stopReason: string | null;
 }
 
+/** Store usage cap data for the given tab */
+export interface StoreMessageLimitMessage {
+    type: 'STORE_MESSAGE_LIMIT';
+    platform: string;
+    messageLimitUtilization: number;
+}
+
 /** Union of all valid messages the background script will handle */
-export type BackgroundMessage = CountTokensMessage | StoreTokenBatchMessage;
+export type BackgroundMessage = CountTokensMessage | StoreTokenBatchMessage | StoreMessageLimitMessage;
