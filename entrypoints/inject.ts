@@ -8,7 +8,9 @@ export default defineUnlistedScript(() => {
         // ─── INLINED PROVIDER CONFIG ────────────────────────────────────────────────
         // Source of truth is lib/platform-config.ts — kept in sync manually.
         // Inlined to guarantee zero transitive chrome.* references in MAIN world.
-        const CLAUDE_ENDPOINTS = ['/api/organizations/'];
+        // VERIFIED: Claude streams via /api/organizations/{uuid}/chat_conversations/{uuid}/completion
+        // '/chat_conversations/' is specific enough — won't match analytics or auth calls
+        const CLAUDE_ENDPOINTS = ['/chat_conversations/'];
         // ─── CAPTURE PLATFORM FETCH WRAPPER ─────────────────────────────────────────
         // On both claude.ai and chat.openai.com, fetch is already monkey-patched
         // by DataDog/Intercom instrumentation. We save THEIR wrapper as originalFetch.

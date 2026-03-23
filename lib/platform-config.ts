@@ -5,8 +5,10 @@
 
 export const PROVIDER_CONFIG = {
     claude: {
-        // VERIFY in DevTools before first run — these may change
-        endpoints: ['/api/organizations/'],
+        // VERIFIED: Full path is /api/organizations/{uuid}/chat_conversations/{uuid}/completion
+        // '/chat_conversations/' is specific enough — won't match analytics or auth calls
+        // '/completion' alone is too broad — other endpoints might use it
+        endpoints: ['/chat_conversations/'],
         sentinels: ['message_start', 'content_block_stop', 'message_delta'],
         terminator: 'message_stop',
     },
