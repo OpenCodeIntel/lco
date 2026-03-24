@@ -146,3 +146,10 @@ export interface StoreMessageLimitMessage {
 
 /** Union of all valid messages the background script will handle */
 export type BackgroundMessage = CountTokensMessage | StoreTokenBatchMessage | StoreMessageLimitMessage;
+
+/** Response returned by the background after STORE_TOKEN_BATCH */
+export interface StoreTokenBatchResponse {
+    ok: boolean;
+    tabState?: TabState;
+    sessionCost?: SessionCost;
+}

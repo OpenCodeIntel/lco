@@ -32,6 +32,7 @@ export function calculateCost(
     outputTokens: number,
     model: string,
 ): number | null {
+    if (inputTokens < 0 || outputTokens < 0) return null;
     const pricing = lookupModel(model);
     if (!pricing) return null;
     return inputTokens * pricing.inputCostPerToken + outputTokens * pricing.outputCostPerToken;

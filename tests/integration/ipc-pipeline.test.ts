@@ -14,8 +14,12 @@ function isValidBridgeSchema(data: any): boolean {
   if (typeof data !== 'object' || data === null) return false;
   if (data.namespace !== LCO_NAMESPACE) return false;
   if (typeof data.token !== 'string' || data.token.length === 0) return false;
-  if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN'].includes(data.type)) return false;
-  if (data.type !== 'HEALTH_BROKEN') {
+  if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'MESSAGE_LIMIT_UPDATE'].includes(data.type)) return false;
+  if (data.type === 'MESSAGE_LIMIT_UPDATE') {
+    if (typeof data.messageLimitUtilization !== 'number') return false;
+  } else if (data.type === 'HEALTH_BROKEN') {
+    if (typeof data.message !== 'string') return false;
+  } else {
     if (typeof data.inputTokens !== 'number') return false;
     if (typeof data.outputTokens !== 'number') return false;
     if (typeof data.model !== 'string') return false;
@@ -191,6 +195,35 @@ describe('IPC pipeline — invalid messages dropped', () => {
       },
     });
     // HEALTH_BROKEN is logged, not stored
+    expect(onStore).not.toHaveBeenCalled();
+  });
+
+  it('does not forward MESSAGE_LIMIT_UPDATE to storage', () => {
+    bridge({
+      origin: 'https://claude.ai',
+      data: {
+        namespace: LCO_NAMESPACE,
+        token: sessionToken,
+        type: 'MESSAGE_LIMIT_UPDATE',
+        platform: 'claude',
+        messageLimitUtilization: 0.48,
+      },
+    });
+    // MESSAGE_LIMIT_UPDATE goes to a separate background handler, not STORE_TOKEN_BATCH
+    expect(onStore).not.toHaveBeenCalled();
+  });
+
+  it('drops MESSAGE_LIMIT_UPDATE with non-numeric utilization', () => {
+    bridge({
+      origin: 'https://claude.ai',
+      data: {
+        namespace: LCO_NAMESPACE,
+        token: sessionToken,
+        type: 'MESSAGE_LIMIT_UPDATE',
+        platform: 'claude',
+        messageLimitUtilization: 'high', // wrong type
+      },
+    });
     expect(onStore).not.toHaveBeenCalled();
   });
 });
