@@ -99,19 +99,11 @@ async function showEnableBanner(): Promise<void> {
     document.body.appendChild(banner);
 
     enableBtn.addEventListener('click', async () => {
-        try {
-            const granted = await browser.permissions.request({
-                origins: ['https://claude.ai/*'],
-            });
-            banner.remove();
-            if (granted) {
-                await browser.storage.local.set({ lco_enabled_claude: true });
-                await initializeMonitoring();
-            }
-        } catch (err) {
-            console.error('[LCO-ERROR] Permission request failed:', err);
-            banner.remove();
-        }
+        await browser.storage.local.set({ lco_enabled_claude: true });
+        banner.remove();
+        // Reload so initializeMonitoring() runs from document_start —
+        // injectScript must intercept fetch before any page JS fires.
+        window.location.reload();
     });
 
     dismissBtn.addEventListener('click', () => {
