@@ -16,6 +16,7 @@ export default defineConfig({
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
     },
     host_permissions: [],
+    optional_host_permissions: ['https://claude.ai/*'],
     web_accessible_resources: [
       {
         resources: ['inject.js'],
