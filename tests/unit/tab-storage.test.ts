@@ -57,12 +57,16 @@ async function writeTabState(
     updatedAt: now,
   };
 
-  const newCost: SessionCost = {
-    totalInputTokens: prev.totalInputTokens + inputTokens,
-    totalOutputTokens: prev.totalOutputTokens + outputTokens,
-    requestCount: stopReason !== null ? prev.requestCount + 1 : prev.requestCount,
-    updatedAt: now,
-  };
+  // Only accumulate session totals on STREAM_COMPLETE — not on every TOKEN_BATCH flush.
+  const isComplete = stopReason !== null;
+  const newCost: SessionCost = isComplete
+    ? {
+        totalInputTokens: prev.totalInputTokens + inputTokens,
+        totalOutputTokens: prev.totalOutputTokens + outputTokens,
+        requestCount: prev.requestCount + 1,
+        updatedAt: now,
+      }
+    : { ...prev, updatedAt: now };
 
   await storage.set({ [stateKey]: newTabState, [costKey]: newCost });
 }
@@ -110,6 +114,23 @@ describe('tab storage — key isolation', () => {
 
     const result = await storage.get(['sessionCost_1']);
     expect(result['sessionCost_1'].requestCount).toBe(0);
+    // SESSION totals must not accumulate on intermediate streaming flushes
+    expect(result['sessionCost_1'].totalInputTokens).toBe(0);
+    expect(result['sessionCost_1'].totalOutputTokens).toBe(0);
+  });
+
+  it('does not double-count when TOKEN_BATCH flushes precede STREAM_COMPLETE', async () => {
+    // Simulate 3 intermediate 200ms flushes, then the final stream-complete
+    await writeTabState(storage, 1, 'claude', 'claude-sonnet-4-6', 10, 40, null);
+    await writeTabState(storage, 1, 'claude', 'claude-sonnet-4-6', 20, 80, null);
+    await writeTabState(storage, 1, 'claude', 'claude-sonnet-4-6', 25, 100, null);
+    await writeTabState(storage, 1, 'claude', 'claude-sonnet-4-6', 25, 100, 'end_turn');
+
+    const result = await storage.get(['sessionCost_1']);
+    // Only the final STREAM_COMPLETE tokens should be accumulated
+    expect(result['sessionCost_1'].totalInputTokens).toBe(25);
+    expect(result['sessionCost_1'].totalOutputTokens).toBe(100);
+    expect(result['sessionCost_1'].requestCount).toBe(1);
   });
 });
 

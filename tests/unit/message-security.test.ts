@@ -13,8 +13,12 @@ function isValidBridgeSchema(data: any): boolean {
   if (typeof data !== 'object' || data === null) return false;
   if (data.namespace !== LCO_NAMESPACE) return false;
   if (typeof data.token !== 'string' || data.token.length === 0) return false;
-  if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN'].includes(data.type)) return false;
-  if (data.type !== 'HEALTH_BROKEN') {
+  if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'MESSAGE_LIMIT_UPDATE'].includes(data.type)) return false;
+  if (data.type === 'MESSAGE_LIMIT_UPDATE') {
+    if (typeof data.messageLimitUtilization !== 'number') return false;
+  } else if (data.type === 'HEALTH_BROKEN') {
+    if (typeof data.message !== 'string') return false;
+  } else {
     if (typeof data.inputTokens !== 'number') return false;
     if (typeof data.outputTokens !== 'number') return false;
     if (typeof data.model !== 'string') return false;
@@ -64,6 +68,40 @@ describe('5-layer bridge schema validator', () => {
         message: 'SSE lifecycle events missing',
       }),
     ).toBe(true);
+  });
+
+  it('accepts a valid MESSAGE_LIMIT_UPDATE message', () => {
+    expect(
+      isValidBridgeSchema({
+        namespace: LCO_NAMESPACE,
+        token: validToken,
+        type: 'MESSAGE_LIMIT_UPDATE',
+        platform: 'claude',
+        messageLimitUtilization: 0.48,
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects MESSAGE_LIMIT_UPDATE with missing utilization field', () => {
+    expect(
+      isValidBridgeSchema({
+        namespace: LCO_NAMESPACE,
+        token: validToken,
+        type: 'MESSAGE_LIMIT_UPDATE',
+        platform: 'claude',
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects HEALTH_BROKEN with missing message field', () => {
+    expect(
+      isValidBridgeSchema({
+        namespace: LCO_NAMESPACE,
+        token: validToken,
+        type: 'HEALTH_BROKEN',
+        platform: 'claude',
+      }),
+    ).toBe(false);
   });
 
   it('rejects null', () => {

@@ -42,7 +42,11 @@ function sessionCostKey(tabId: number): string {
   return `sessionCost_${tabId}`;
 }
 
-/** Write updated token counts for a given tab into chrome.storage.session */
+/**
+ * Write updated token counts for a given tab into chrome.storage.session.
+ * Session cost is only accumulated on STREAM_COMPLETE (stopReason !== null)
+ * to avoid double-counting the per-200ms TOKEN_BATCH intermediate flushes.
+ */
 async function writeTabState(
   tabId: number,
   platform: string,
@@ -50,13 +54,12 @@ async function writeTabState(
   inputTokens: number,
   outputTokens: number,
   stopReason: string | null,
-): Promise<void> {
+): Promise<{ tabState: TabState; sessionCost: SessionCost }> {
   const stateKey = tabStateKey(tabId);
   const costKey = sessionCostKey(tabId);
 
-  // Read existing session cost to accumulate across multiple requests in the same tab
   const existing = await browser.storage.session.get([costKey]);
-  const prev: SessionCost = (existing[costKey] as SessionCost | undefined) ?? {
+  const prev: SessionCost = existing[costKey] ?? {
     totalInputTokens: 0,
     totalOutputTokens: 0,
     requestCount: 0,
@@ -64,6 +67,7 @@ async function writeTabState(
   };
 
   const now = Date.now();
+  const isComplete = stopReason !== null;
 
   const newTabState: TabState = {
     platform,
@@ -74,39 +78,42 @@ async function writeTabState(
     updatedAt: now,
   };
 
-  // Only increment request count on stream completion (stopReason present)
-  const requestCost = calculateCost(inputTokens, outputTokens, model);
-  const newCost: SessionCost = {
-    totalInputTokens: prev.totalInputTokens + inputTokens,
-    totalOutputTokens: prev.totalOutputTokens + outputTokens,
-    requestCount: stopReason !== null ? prev.requestCount + 1 : prev.requestCount,
-    estimatedCost: requestCost !== null ? (prev.estimatedCost ?? 0) + requestCost : prev.estimatedCost,
-    updatedAt: now,
-  };
+  // Only accumulate session totals on STREAM_COMPLETE — not on every 200ms TOKEN_BATCH flush.
+  const thisCost = isComplete ? calculateCost(inputTokens, outputTokens, model) : null;
+  const newCost: SessionCost = isComplete
+    ? {
+        totalInputTokens: prev.totalInputTokens + inputTokens,
+        totalOutputTokens: prev.totalOutputTokens + outputTokens,
+        requestCount: prev.requestCount + 1,
+        estimatedCost:
+          thisCost !== null ? (prev.estimatedCost ?? 0) + thisCost : prev.estimatedCost,
+        updatedAt: now,
+      }
+    : { ...prev, updatedAt: now };
 
   await browser.storage.session.set({
     [stateKey]: newTabState,
     [costKey]: newCost,
   });
+
+  return { tabState: newTabState, sessionCost: newCost };
 }
 
-/** Update the existing tabState with the latest message limit utilization */
-async function writeMessageLimit(tabId: number, utilization: number): Promise<void> {
+/**
+ * Persist the message limit utilization into the current tabState snapshot.
+ * Returns the updated TabState, or null if no state exists yet for this tab.
+ */
+async function writeMessageLimit(
+  tabId: number,
+  messageLimitUtilization: number,
+): Promise<TabState | null> {
   const stateKey = tabStateKey(tabId);
   const existing = await browser.storage.session.get([stateKey]);
-  const currentState: TabState = (existing[stateKey] as TabState | undefined) ?? {
-    platform: 'unknown',
-    model: 'unknown',
-    inputTokens: 0,
-    outputTokens: 0,
-    stopReason: null,
-    updatedAt: Date.now(),
-  };
-
-  currentState.messageLimitUtilization = utilization;
-  currentState.updatedAt = Date.now();
-
-  await browser.storage.session.set({ [stateKey]: currentState });
+  const prev: TabState | undefined = existing[stateKey];
+  if (!prev) return null;
+  const updated: TabState = { ...prev, messageLimitUtilization, updatedAt: Date.now() };
+  await browser.storage.session.set({ [stateKey]: updated });
+  return updated;
 }
 
 /** Remove all storage keys associated with a specific tab */
@@ -156,12 +163,15 @@ export default defineBackground({
         return true; // Keep channel open for async response
       }
 
-      // Token batch storage from the secure LCO_V1 bridge
+      // Token batch storage from the secure LCO_V1 bridge.
+      // Returns { ok, tabState, sessionCost } so the content script can update the overlay
+      // with authoritative storage values rather than in-memory estimates.
       if (message.type === 'STORE_TOKEN_BATCH') {
         const tabId = sender.tab?.id;
         if (tabId === undefined) {
           console.warn('[LCO] STORE_TOKEN_BATCH received without a tab ID — ignoring');
-          return;
+          sendResponse({ ok: false });
+          return true;
         }
 
         // Platform attribution from sender.url (set by Chrome, cannot be spoofed)
@@ -180,7 +190,7 @@ export default defineBackground({
           message.outputTokens,
           message.stopReason,
         )
-          .then(() => sendResponse({ ok: true }))
+          .then(({ tabState, sessionCost }) => sendResponse({ ok: true, tabState, sessionCost }))
           .catch((err) => {
             console.error('[LCO-ERROR] Failed to write tab state to storage:', err);
             sendResponse({ ok: false });
@@ -189,13 +199,16 @@ export default defineBackground({
         return true; // Keep channel open for async response
       }
 
-      // Usage cap utilization from Claude's free-tier message_limit event
+      // Message limit utilization from the SSE message_limit event
       if (message.type === 'STORE_MESSAGE_LIMIT') {
         const tabId = sender.tab?.id;
-        if (tabId === undefined) return;
+        if (tabId === undefined) {
+          sendResponse({ ok: false });
+          return true;
+        }
 
         writeMessageLimit(tabId, message.messageLimitUtilization)
-          .then(() => sendResponse({ ok: true }))
+          .then((tabState) => sendResponse({ ok: true, tabState }))
           .catch((err) => {
             console.error('[LCO-ERROR] Failed to write message limit to storage:', err);
             sendResponse({ ok: false });

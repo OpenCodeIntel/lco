@@ -22,7 +22,13 @@ export default defineUnlistedScript(() => {
 
         // Endpoint Detection
         function isCompletionEndpoint(url: string): boolean {
-            return url.includes(CLAUDE_CONVERSATION_PATTERN) && url.endsWith(CLAUDE_COMPLETION_SUFFIX);
+            // Use includes rather than endsWith so query-string variants (/completion?v=2) still match.
+            const suffix = CLAUDE_COMPLETION_SUFFIX;
+            const idx = url.indexOf(suffix);
+            if (idx === -1) return false;
+            const after = url[idx + suffix.length];
+            const terminates = after === undefined || after === '?' || after === '#';
+            return url.includes(CLAUDE_CONVERSATION_PATTERN) && terminates;
         }
 
         function isConversationGetEndpoint(url: string): boolean {
@@ -246,6 +252,30 @@ export default defineUnlistedScript(() => {
             } finally {
                 clearInterval(watchdog);
 
+                // Flush the TextDecoder's internal state and process any line that was
+                // not terminated by '\n' in the final chunk (rare but possible).
+                buffer += decoder.decode(); // no {stream:true} → final flush
+                if (buffer.trim()) {
+                    for (const line of buffer.split('\n')) {
+                        if (!line.startsWith('data:')) continue;
+                        const raw = line.slice(5).trim();
+                        if (!raw || raw === '[DONE]') continue;
+                        try {
+                            const evt = JSON.parse(raw);
+                            health.chunksProcessed++;
+                            handleClaudeEvent(evt, health, summary, promptText);
+                            if (evt.type === 'content_block_delta') {
+                                const delta = evt.delta ?? {};
+                                if (delta.type === 'text_delta' && delta.text) {
+                                    outputTextBuffer += delta.text;
+                                }
+                            }
+                        } catch {
+                            console.debug('[LCO] Skipped malformed JSON in final buffer flush');
+                        }
+                    }
+                }
+
                 // Cancel any pending flush and fire a final authoritative STREAM_COMPLETE
                 if (flushTimer !== null) {
                     clearTimeout(flushTimer);
@@ -334,7 +364,13 @@ export default defineUnlistedScript(() => {
             input: RequestInfo | URL,
             init?: RequestInit,
         ): Promise<Response> {
-            const url = typeof input === 'string' ? input : (input as Request)?.url ?? '';
+            // Normalise all three overload shapes: string | URL | Request
+            const url =
+                typeof input === 'string'
+                    ? input
+                    : input instanceof URL
+                        ? input.href
+                        : (input as Request)?.url ?? '';
 
             if (isCompletionEndpoint(url)) {
                 const { model, prompt } = extractModelAndPromptFromInit(init);
