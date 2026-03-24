@@ -96,7 +96,8 @@ async function showEnableBanner(): Promise<void> {
     banner.appendChild(text);
     banner.appendChild(enableBtn);
     banner.appendChild(dismissBtn);
-    document.body.appendChild(banner);
+    // Append to <html>, not <body> — Next.js hydrates <body> and wipes foreign children.
+    document.documentElement.appendChild(banner);
 
     enableBtn.addEventListener('click', async () => {
         await browser.storage.local.set({ lco_enabled_claude: true });
@@ -132,6 +133,8 @@ async function initializeMonitoring(): Promise<void> {
     let elLimitRow: HTMLElement | null = null;
     let elLimitFill: HTMLElement | null = null;
     let elLimitLabel: HTMLElement | null = null;
+    let elDivider: HTMLElement | null = null;
+    let elSessionRow: HTMLElement | null = null;
     let elSession: HTMLElement | null = null;
     let elHealth: HTMLElement | null = null;
     let elCostMini: HTMLElement | null = null;
@@ -202,12 +205,15 @@ async function initializeMonitoring(): Promise<void> {
             }
         }
 
-        if (elSession) {
+        // Session section (divider + row) — hidden until the first request completes
+        const sessionVisible = state.session.requestCount > 0;
+        if (elDivider) elDivider.style.display = sessionVisible ? '' : 'none';
+        if (elSessionRow) elSessionRow.style.display = sessionVisible ? '' : 'none';
+        if (elSession && sessionVisible) {
             const { requestCount, totalInputTokens, totalOutputTokens, totalCost } = state.session;
             const total = totalInputTokens + totalOutputTokens;
-            elSession.textContent = requestCount > 0
-                ? `${requestCount} req · ~${fmt(total)} tok · ${fmtCost(totalCost)}`
-                : '—';
+            elSession.textContent =
+                `${requestCount} req · ~${fmt(total)} tok · ${fmtCost(totalCost)}`;
         }
 
         if (elHealth) {
@@ -310,14 +316,18 @@ async function initializeMonitoring(): Promise<void> {
         limitRow.appendChild(limitLabel);
         body.appendChild(limitRow);
 
-        // Divider
+        // Divider — hidden until first request completes
         const divider = document.createElement('div');
         divider.className = 'lco-divider';
+        divider.style.display = 'none';
+        elDivider = divider;
         body.appendChild(divider);
 
-        // Session row
+        // Session row — hidden until first request completes
         const rowSession = document.createElement('div');
         rowSession.className = 'lco-row';
+        rowSession.style.display = 'none';
+        elSessionRow = rowSession;
         const lblSession = document.createElement('span');
         lblSession.className = 'lco-label';
         lblSession.textContent = 'session';
