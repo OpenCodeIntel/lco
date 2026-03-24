@@ -390,7 +390,7 @@ export default defineUnlistedScript(() => {
 
             if (isConversationGetEndpoint(url)) {
                 const response = await nativeFetch.call(this, input, init);
-                probeConversationResponse(response).catch(() => { });
+                probeConversationResponse(response);
                 return response;
             }
 
