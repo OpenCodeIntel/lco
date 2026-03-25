@@ -19,7 +19,7 @@ export default defineConfig({
     web_accessible_resources: [
       {
         resources: ['inject.js'],
-        matches: ['https://claude.ai/*', 'https://chat.openai.com/*'],
+        matches: ['https://claude.ai/*'],
       },
     ],
   },

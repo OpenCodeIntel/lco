@@ -25,7 +25,7 @@ export function lookupModel(modelName: string): ModelPricing | null {
 
 /**
  * Calculates the estimated USD cost for a request.
- * Returns null if the model is not in the pricing table — never throws.
+ * Returns null if the model is not in the pricing table. Never throws.
  */
 export function calculateCost(
     inputTokens: number,

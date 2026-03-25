@@ -1,9 +1,9 @@
 // entrypoints/inject.ts - Main world fetch interceptor and Claude SSE decoder (Room 1)
 // Runs in the page's JavaScript context (Room 1).
-// This script is entirely self-contained — no imports from lib/ to prevent
-// chrome.* API references from bleeding into the unprivileged page context.
-// WXT injects this as an unlisted script via injectScript() from the content script,
-// passing the session token and platform via dataset attributes.
+// Entirely self-contained: no imports from lib/ to prevent chrome.* API
+// references from bleeding into the unprivileged page context.
+// Injected via WXT injectScript() from the content script. Session token
+// and platform are passed via dataset attributes.
 
 export default defineUnlistedScript(() => {
     (function () {
@@ -31,13 +31,9 @@ export default defineUnlistedScript(() => {
             return url.includes(CLAUDE_CONVERSATION_PATTERN) && terminates;
         }
 
-        function isConversationGetEndpoint(url: string): boolean {
-            return url.includes(CLAUDE_CONVERSATION_PATTERN) && url.includes('rendering_mode=messages');
-        }
-
         // Secure Bridge: postMessage with LCO_V1 namespace + session token
         // Messages are batched every 200ms to avoid saturating the bridge.
-        // Never uses '*' as targetOrigin — always scoped to the current origin.
+        // Never uses '*' as targetOrigin; always scoped to the current origin.
         function postSecureBatch(payload: {
             type: 'TOKEN_BATCH' | 'STREAM_COMPLETE' | 'HEALTH_BROKEN' | 'MESSAGE_LIMIT_UPDATE';
             inputTokens?: number;
@@ -91,6 +87,7 @@ export default defineUnlistedScript(() => {
         }
 
         // Claude SSE Event Handler
+        // HealthState is defined inline because inject.ts cannot import from lib/.
         interface HealthState {
             chunksProcessed: number;
             sawMessageStart: boolean;
@@ -173,7 +170,7 @@ export default defineUnlistedScript(() => {
 
             let lastDataTime = Date.now();
 
-            // 200ms batch flush timer — groups token data into single postMessage bursts
+            // 200ms batch flush timer: groups token data into single postMessage bursts
             let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
             function scheduleBatchFlush() {
@@ -345,11 +342,6 @@ export default defineUnlistedScript(() => {
             }
         }
 
-        // TODO(LCO-future): probeConversationResponse — inspect conversation GET
-        // response shape when Anthropic adds token usage to the REST endpoint.
-        // Currently the GET response contains no token/usage fields (verified March 2026).
-        function probeConversationResponse(_response: Response): void { /* no-op */ }
-
         // Intercept API Requests
         const nativeFetch = originalFetch;
         window.fetch = async function (
@@ -385,12 +377,6 @@ export default defineUnlistedScript(() => {
                     return cleanResponse;
                 }
 
-                return response;
-            }
-
-            if (isConversationGetEndpoint(url)) {
-                const response = await nativeFetch.call(this, input, init);
-                probeConversationResponse(response);
                 return response;
             }
 

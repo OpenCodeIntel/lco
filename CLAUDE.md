@@ -42,25 +42,29 @@ Background worker. Runs `js-tiktoken` with `@anthropic-ai/tokenizer` claude.json
 - Unknown models: return null, show `$0.00*`, never crash.
 - Service worker: all listeners synchronous at top level, async inside handlers.
 - Tests: `bun run test`. Commits: `type(scope): description [LCO-XXX]`.
+- No emojis anywhere in code, comments, or docs.
+- No emdashes in comments or docs. Use colons, semicolons, or rewrite the sentence.
+- No AI-generated filler ("it's worth noting", "leveraging", "utilize"). Write like a human.
 
 ## Current Status
 
 ```
 Done:
-  LCO-1  Data Pipeline Foundation (SSE intercept, bridge, storage, tokenizer)
-  LCO-2  Shadow DOM UI Overlay (vanilla DOM, frosted glass HUD)
-  LCO-3  Live Data Wiring (TOKEN_BATCH, STREAM_COMPLETE, message_limit, session totals)
-  LCO-4  CI/CD Pipeline (GitHub Actions: typecheck, test, build)
-         PR template, issue templates
-         Security fix: wildcard origins
-         Performance fix: blocking await → sync buffer + final BPE
-         
+  LCO-1   Data Pipeline Foundation (SSE intercept, bridge, storage, tokenizer)
+  LCO-2   Shadow DOM UI Overlay (vanilla DOM, frosted glass HUD)
+  LCO-3   Live Data Wiring (TOKEN_BATCH, STREAM_COMPLETE, message_limit, session totals)
+  LCO-4   CI/CD Pipeline (GitHub Actions: typecheck, test, build)
+  LCO-5   JIT Permission System (optional_host_permissions, enable banner, runtime request)
+  LCO-6   End-to-End Testing (7 manual scenarios, 2 bugs fixed)
+  LCO-17  Dead Code Cleanup (unused types, stubs, premature ChatGPT refs)
+
+In Progress:
+  LCO-7   Chrome Web Store Submission (docs done, store assets + submission pending)
+
 Remaining:
-  LCO-5  JIT Permission System — optional_host_permissions, runtime request, enable banner
-  LCO-6  End-to-End Testing — multi-tab, abort, short response, unknown model, route change
-  LCO-7  Chrome Web Store Submission — privacy policy, README, CONTRIBUTING, store assets
+  LCO-14  Provider Abstraction Layer (multi-platform architecture)
+  LCO-15  Health Check System (SSE lifecycle monitoring)
+  LCO-16  Test Coverage (SSE decoder, batch flush, health detection)
 ```
 
-## Next: LCO-5 — JIT Permission System
-
-Add `optional_host_permissions: ["https://claude.ai/*"]` to manifest. Check chrome.storage.local for existing grant before initializing. Show enable banner on first visit. Call chrome.permissions.request on click. Store grant, never prompt again. Only inject interceptor + bridge after permission confirmed.
+Full backlog tracked in Linear (team: LCO, issues LCO-8 through LCO-26).
