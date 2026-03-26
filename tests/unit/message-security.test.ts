@@ -13,11 +13,13 @@ function isValidBridgeSchema(data: any): boolean {
   if (typeof data !== 'object' || data === null) return false;
   if (data.namespace !== LCO_NAMESPACE) return false;
   if (typeof data.token !== 'string' || data.token.length === 0) return false;
-  if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'MESSAGE_LIMIT_UPDATE'].includes(data.type)) return false;
+  if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'HEALTH_RECOVERED', 'MESSAGE_LIMIT_UPDATE'].includes(data.type)) return false;
   if (data.type === 'MESSAGE_LIMIT_UPDATE') {
     if (typeof data.messageLimitUtilization !== 'number') return false;
   } else if (data.type === 'HEALTH_BROKEN') {
     if (typeof data.message !== 'string') return false;
+  } else if (data.type === 'HEALTH_RECOVERED') {
+    if (typeof data.recoveredAt !== 'number') return false;
   } else {
     if (typeof data.inputTokens !== 'number') return false;
     if (typeof data.outputTokens !== 'number') return false;
@@ -65,9 +67,45 @@ describe('5-layer bridge schema validator', () => {
         token: validToken,
         type: 'HEALTH_BROKEN',
         platform: 'claude',
+        reason: 'missing_sentinel',
         message: 'SSE lifecycle events missing',
       }),
     ).toBe(true);
+  });
+
+  it('accepts a HEALTH_RECOVERED message', () => {
+    expect(
+      isValidBridgeSchema({
+        namespace: LCO_NAMESPACE,
+        token: validToken,
+        type: 'HEALTH_RECOVERED',
+        platform: 'claude',
+        recoveredAt: Date.now(),
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects HEALTH_RECOVERED with missing recoveredAt field', () => {
+    expect(
+      isValidBridgeSchema({
+        namespace: LCO_NAMESPACE,
+        token: validToken,
+        type: 'HEALTH_RECOVERED',
+        platform: 'claude',
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects HEALTH_RECOVERED with non-numeric recoveredAt', () => {
+    expect(
+      isValidBridgeSchema({
+        namespace: LCO_NAMESPACE,
+        token: validToken,
+        type: 'HEALTH_RECOVERED',
+        platform: 'claude',
+        recoveredAt: 'now',
+      }),
+    ).toBe(false);
   });
 
   it('accepts a valid MESSAGE_LIMIT_UPDATE message', () => {

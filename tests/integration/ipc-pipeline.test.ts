@@ -14,11 +14,13 @@ function isValidBridgeSchema(data: any): boolean {
   if (typeof data !== 'object' || data === null) return false;
   if (data.namespace !== LCO_NAMESPACE) return false;
   if (typeof data.token !== 'string' || data.token.length === 0) return false;
-  if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'MESSAGE_LIMIT_UPDATE'].includes(data.type)) return false;
+  if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'HEALTH_RECOVERED', 'MESSAGE_LIMIT_UPDATE'].includes(data.type)) return false;
   if (data.type === 'MESSAGE_LIMIT_UPDATE') {
     if (typeof data.messageLimitUtilization !== 'number') return false;
   } else if (data.type === 'HEALTH_BROKEN') {
     if (typeof data.message !== 'string') return false;
+  } else if (data.type === 'HEALTH_RECOVERED') {
+    if (typeof data.recoveredAt !== 'number') return false;
   } else {
     if (typeof data.inputTokens !== 'number') return false;
     if (typeof data.outputTokens !== 'number') return false;
@@ -191,10 +193,26 @@ describe('IPC pipeline — invalid messages dropped', () => {
         token: sessionToken,
         type: 'HEALTH_BROKEN',
         platform: 'claude',
-        message: 'Missing Claude lifecycle events',
+        reason: 'missing_sentinel',
+        message: 'stream_start event never arrived',
       },
     });
-    // HEALTH_BROKEN is logged, not stored
+    // HEALTH_BROKEN updates UI state only, not storage
+    expect(onStore).not.toHaveBeenCalled();
+  });
+
+  it('does not forward HEALTH_RECOVERED to storage', () => {
+    bridge({
+      origin: 'https://claude.ai',
+      data: {
+        namespace: LCO_NAMESPACE,
+        token: sessionToken,
+        type: 'HEALTH_RECOVERED',
+        platform: 'claude',
+        recoveredAt: Date.now(),
+      },
+    });
+    // HEALTH_RECOVERED clears UI warning only, not storage
     expect(onStore).not.toHaveBeenCalled();
   });
 
