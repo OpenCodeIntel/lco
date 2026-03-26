@@ -1,34 +1,71 @@
-// entrypoints/inject.ts - Main world fetch interceptor and Claude SSE decoder (Room 1)
+// entrypoints/inject.ts - Main world fetch interceptor and SSE decoder (Room 1)
 // Runs in the page's JavaScript context (Room 1).
 // Entirely self-contained: no imports from lib/ to prevent chrome.* API
 // references from bleeding into the unprivileged page context.
-// Injected via WXT injectScript() from the content script. Session token
-// and platform are passed via dataset attributes.
+// Injected via WXT injectScript() from the content script. Session token,
+// platform, and provider config are passed via dataset attributes.
 
 export default defineUnlistedScript(() => {
     (function () {
-        // Provider Configuration (Inlined)
-        const CLAUDE_COMPLETION_SUFFIX = '/completion';
-        const CLAUDE_CONVERSATION_PATTERN = '/chat_conversations/';
+        // Provider config is serialized by the content script and passed via
+        // dataset.injectConfig. All provider-specific strings live in
+        // lib/adapters/claude.ts (or the relevant adapter) — not here.
+        //
+        // InjectConfig is defined inline to avoid importing from lib/.
+        // The shape must stay in sync with lib/adapters/types.ts.
+        interface InjectConfig {
+            endpointIncludes: string;
+            endpointSuffix: string;
+            events: {
+                streamStart: string;
+                contentBlockStart: string;
+                contentDelta: string;
+                streamEnd: string;
+                messageLimit: string;
+                stopReason: string;
+            };
+            paths: {
+                messageLimitUtilization: string;
+                stopReason: string;
+                contentDeltaType: string;
+                contentDeltaTypeValue: string;
+                contentDeltaText: string;
+            };
+            body: {
+                model: string;
+                prompt: string;
+            };
+        }
 
         // LCO_V1 Bridge Security Constants (Inlined)
-        // Session token and platform are injected by the content script at load time.
+        // Session token, platform, and inject config are all set by the content
+        // script at injection time via dataset attributes.
         const LCO_NAMESPACE = 'LCO_V1';
         const SESSION_TOKEN = document.currentScript?.dataset.sessionToken ?? '';
-        const PLATFORM = document.currentScript?.dataset.platform ?? 'claude';
+        const PLATFORM = document.currentScript?.dataset.platform ?? '';
+        const INJECT_CONFIG: InjectConfig = JSON.parse(
+            document.currentScript?.dataset.injectConfig ?? '{}',
+        );
 
         // Capture the original fetch function before it is modified by platform wrappers
         const originalFetch = window.fetch;
 
+        // Dot-path accessor used to extract values from SSE event objects.
+        // Example: getPath(evt, 'delta.stop_reason') returns evt.delta?.stop_reason.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        function getPath(obj: any, dotPath: string): any {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return dotPath.split('.').reduce((o: any, k: string) => o?.[k], obj);
+        }
+
         // Endpoint Detection
         function isCompletionEndpoint(url: string): boolean {
-            // Use includes rather than endsWith so query-string variants (/completion?v=2) still match.
-            const suffix = CLAUDE_COMPLETION_SUFFIX;
-            const idx = url.indexOf(suffix);
+            // Use indexOf rather than endsWith so query-string variants still match.
+            const idx = url.indexOf(INJECT_CONFIG.endpointSuffix);
             if (idx === -1) return false;
-            const after = url[idx + suffix.length];
+            const after = url[idx + INJECT_CONFIG.endpointSuffix.length];
             const terminates = after === undefined || after === '?' || after === '#';
-            return url.includes(CLAUDE_CONVERSATION_PATTERN) && terminates;
+            return url.includes(INJECT_CONFIG.endpointIncludes) && terminates;
         }
 
         // Secure Bridge: postMessage with LCO_V1 namespace + session token
@@ -86,7 +123,7 @@ export default defineUnlistedScript(() => {
             });
         }
 
-        // Claude SSE Event Handler
+        // SSE Event Handler
         // HealthState is defined inline because inject.ts cannot import from lib/.
         interface HealthState {
             chunksProcessed: number;
@@ -95,28 +132,31 @@ export default defineUnlistedScript(() => {
             stopReason: string | null;
         }
 
-        function handleClaudeEvent(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        function handleProviderEvent(
             evt: any,
+            config: InjectConfig,
             health: HealthState,
             summary: { inputTokens: number; outputTokens: number; model: string },
             promptText: string,
         ) {
+            const { events, paths } = config;
             const type = evt.type;
 
-            if (type === 'message_start') {
+            if (type === events.streamStart) {
                 health.sawMessageStart = true;
                 // Use chars/4 as a fast synchronous estimate for real-time batch flushes.
                 // Accurate BPE counts are computed once in the finally block.
                 if (promptText) {
                     summary.inputTokens = Math.round(promptText.length / 4);
                 }
-                console.log(`[LCO] message_start : input: ~${summary.inputTokens} tokens (chars/4 estimate)`);
+                console.log(`[LCO] ${events.streamStart} : input: ~${summary.inputTokens} tokens (chars/4 estimate)`);
             }
 
-            if (type === 'message_limit') {
-                const utilization = evt.message_limit?.windows?.overage?.utilization;
+            if (type === events.messageLimit) {
+                const utilization = getPath(evt, paths.messageLimitUtilization);
                 if (typeof utilization === 'number') {
-                    console.log(`[LCO] message_limit : utilization: ${(utilization * 100).toFixed(1)}%`);
+                    console.log(`[LCO] ${events.messageLimit} : utilization: ${(utilization * 100).toFixed(1)}%`);
                     postSecureBatch({
                         type: 'MESSAGE_LIMIT_UPDATE',
                         messageLimitUtilization: utilization,
@@ -124,17 +164,17 @@ export default defineUnlistedScript(() => {
                 }
             }
 
-            if (type === 'content_block_start') {
+            if (type === events.contentBlockStart) {
                 health.sawContentBlock = true;
             }
 
-            if (type === 'message_delta') {
-                health.stopReason = evt.delta?.stop_reason ?? null;
-                console.log(`[LCO] message_delta : stop_reason: ${health.stopReason}`);
+            if (type === events.stopReason) {
+                health.stopReason = getPath(evt, paths.stopReason) ?? null;
+                console.log(`[LCO] ${events.stopReason} : stop_reason: ${health.stopReason}`);
             }
 
-            if (type === 'message_stop') {
-                console.log('[LCO] message_stop : stream confirmed complete');
+            if (type === events.streamEnd) {
+                console.log(`[LCO] ${events.streamEnd} : stream confirmed complete`);
             }
 
             if (type === 'error') {
@@ -226,19 +266,23 @@ export default defineUnlistedScript(() => {
                         try {
                             const evt = JSON.parse(raw);
                             health.chunksProcessed++;
-                            handleClaudeEvent(evt, health, summary, promptText);
+                            handleProviderEvent(evt, INJECT_CONFIG, health, summary, promptText);
 
                             // Accumulate output text synchronously; update estimate with chars/4.
-                            if (evt.type === 'content_block_delta') {
-                                const delta = evt.delta ?? {};
-                                if (delta.type === 'text_delta' && delta.text) {
-                                    outputTextBuffer += delta.text;
+                            if (evt.type === INJECT_CONFIG.events.contentDelta) {
+                                const deltaType = getPath(evt, INJECT_CONFIG.paths.contentDeltaType);
+                                const text = getPath(evt, INJECT_CONFIG.paths.contentDeltaText);
+                                if (deltaType === INJECT_CONFIG.paths.contentDeltaTypeValue && text) {
+                                    outputTextBuffer += text;
                                     summary.outputTokens = Math.round(outputTextBuffer.length / 4);
                                 }
                             }
 
                             // Schedule a batch flush after processing each event with token data
-                            if (evt.type === 'message_start' || evt.type === 'content_block_delta') {
+                            if (
+                                evt.type === INJECT_CONFIG.events.streamStart ||
+                                evt.type === INJECT_CONFIG.events.contentDelta
+                            ) {
                                 scheduleBatchFlush();
                             }
                         } catch {
@@ -251,7 +295,7 @@ export default defineUnlistedScript(() => {
 
                 // Flush the TextDecoder's internal state and process any line that was
                 // not terminated by '\n' in the final chunk (rare but possible).
-                buffer += decoder.decode(); // no {stream:true} → final flush
+                buffer += decoder.decode(); // no {stream:true} -> final flush
                 if (buffer.trim()) {
                     for (const line of buffer.split('\n')) {
                         if (!line.startsWith('data:')) continue;
@@ -260,11 +304,12 @@ export default defineUnlistedScript(() => {
                         try {
                             const evt = JSON.parse(raw);
                             health.chunksProcessed++;
-                            handleClaudeEvent(evt, health, summary, promptText);
-                            if (evt.type === 'content_block_delta') {
-                                const delta = evt.delta ?? {};
-                                if (delta.type === 'text_delta' && delta.text) {
-                                    outputTextBuffer += delta.text;
+                            handleProviderEvent(evt, INJECT_CONFIG, health, summary, promptText);
+                            if (evt.type === INJECT_CONFIG.events.contentDelta) {
+                                const deltaType = getPath(evt, INJECT_CONFIG.paths.contentDeltaType);
+                                const text = getPath(evt, INJECT_CONFIG.paths.contentDeltaText);
+                                if (deltaType === INJECT_CONFIG.paths.contentDeltaTypeValue && text) {
+                                    outputTextBuffer += text;
                                 }
                             }
                         } catch {
@@ -311,11 +356,11 @@ export default defineUnlistedScript(() => {
                     // Surface a health broken event so the UI can show a warning
                     postSecureBatch({
                         type: 'HEALTH_BROKEN',
-                        message: `${health.chunksProcessed} chunks processed but missing Claude lifecycle events.`,
+                        message: `${health.chunksProcessed} chunks processed but missing ${PLATFORM} lifecycle events.`,
                     });
                     console.warn(
                         '[LCO-ERROR] Health check failed: ' +
-                        `${health.chunksProcessed} chunks processed but missing Claude lifecycle events.`,
+                        `${health.chunksProcessed} chunks processed but missing ${PLATFORM} lifecycle events.`,
                     );
                 }
             }
@@ -334,8 +379,10 @@ export default defineUnlistedScript(() => {
                             : null;
                 if (!bodyStr) return result;
                 const parsed = JSON.parse(bodyStr);
-                if (parsed.model) result.model = parsed.model;
-                if (parsed.prompt) result.prompt = parsed.prompt;
+                const modelField = INJECT_CONFIG.body.model;
+                const promptField = INJECT_CONFIG.body.prompt;
+                if (parsed[modelField]) result.model = parsed[modelField];
+                if (parsed[promptField]) result.prompt = parsed[promptField];
                 return result;
             } catch {
                 return result;

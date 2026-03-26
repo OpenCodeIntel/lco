@@ -11,6 +11,7 @@ import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreTokenBatchResponse 
 import { LCO_NAMESPACE } from '../lib/message-types';
 import { calculateCost, getContextWindowSize } from '../lib/pricing';
 import { OVERLAY_CSS } from '../ui/overlay-styles';
+import { ClaudeAdapter } from '../lib/adapters/claude';
 
 export default defineContentScript({
     matches: ['https://claude.ai/*'],
@@ -499,7 +500,8 @@ async function initializeMonitoring(): Promise<void> {
         keepInDom: true,
         modifyScript(script) {
             script.dataset.sessionToken = sessionToken;
-            script.dataset.platform = 'claude';
+            script.dataset.platform = ClaudeAdapter.name;
+            script.dataset.injectConfig = JSON.stringify(ClaudeAdapter.injectConfig);
         },
     });
 
