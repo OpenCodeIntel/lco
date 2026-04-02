@@ -9,7 +9,7 @@ import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageRespon
 import { createOverlay } from '../ui/overlay';
 import { showEnableBanner } from '../ui/enable-banner';
 import { ClaudeAdapter } from '../lib/adapters/claude';
-import { analyzeContext, shouldDismiss, signalKey } from '../lib/context-intelligence';
+import { analyzeContext, shouldDismiss, signalKey, pickTopSignal } from '../lib/context-intelligence';
 import type { ConversationState, ContextSignal } from '../lib/context-intelligence';
 import { getContextWindowSize } from '../lib/pricing';
 
@@ -26,15 +26,6 @@ export default defineContentScript({
         }
     },
 });
-
-const SEVERITY_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
-
-function pickTopSignal(signals: ContextSignal[]): ContextSignal | null {
-    if (signals.length === 0) return null;
-    return signals.reduce((best, s) =>
-        (SEVERITY_RANK[s.severity] ?? 0) > (SEVERITY_RANK[best.severity] ?? 0) ? s : best,
-    );
-}
 
 function freshConvState(): ConversationState {
     return { turnCount: 0, contextPct: 0, contextHistory: [], model: '', contextWindow: 200000 };

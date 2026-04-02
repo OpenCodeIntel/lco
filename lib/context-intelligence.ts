@@ -124,3 +124,15 @@ export function analyzeContext(state: ConversationState): ContextSignal[] {
 export function shouldDismiss(signal: ContextSignal, dismissed: Set<string>): boolean {
     return dismissed.has(signalKey(signal));
 }
+
+// Severity rank for priority selection. Higher = shown first.
+const SEVERITY_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
+
+// From a list of active signals, returns the one with the highest severity.
+// Returns null if the list is empty. When severities tie, the first match wins.
+export function pickTopSignal(signals: ContextSignal[]): ContextSignal | null {
+    if (signals.length === 0) return null;
+    return signals.reduce((best, s) =>
+        (SEVERITY_RANK[s.severity] ?? 0) > (SEVERITY_RANK[best.severity] ?? 0) ? s : best,
+    );
+}

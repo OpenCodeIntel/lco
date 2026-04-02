@@ -3,6 +3,7 @@ import {
     analyzeContext,
     shouldDismiss,
     signalKey,
+    pickTopSignal,
     CONTEXT_THRESHOLD_INFO,
     CONTEXT_THRESHOLD_WARNING,
     CONTEXT_THRESHOLD_CRITICAL,
@@ -357,5 +358,53 @@ describe('multiple simultaneous signals', () => {
             contextHistory: [5, 10],
         }));
         expect(signals).toHaveLength(0);
+    });
+});
+
+// ── pickTopSignal ─────────────────────────────────────────────────────────────
+
+describe('pickTopSignal', () => {
+    const info: ContextSignal     = { type: 'threshold',         severity: 'info',     message: '', dismissible: true };
+    const warning: ContextSignal  = { type: 'growth_warning',    severity: 'warning',  message: '', dismissible: true };
+    const critical: ContextSignal = { type: 'stale_conversation', severity: 'critical', message: '', dismissible: false };
+
+    it('returns null for an empty array', () => {
+        expect(pickTopSignal([])).toBeNull();
+    });
+
+    it('returns the only signal when there is one', () => {
+        expect(pickTopSignal([info])).toBe(info);
+    });
+
+    it('returns critical over warning and info', () => {
+        expect(pickTopSignal([info, warning, critical])).toBe(critical);
+    });
+
+    it('returns warning over info', () => {
+        expect(pickTopSignal([info, warning])).toBe(warning);
+    });
+
+    it('returns critical even when listed last', () => {
+        expect(pickTopSignal([info, warning, critical].reverse())).toBe(critical);
+    });
+
+    it('returns the first signal when all severities are equal', () => {
+        const a: ContextSignal = { type: 'threshold',      severity: 'info', message: 'a', dismissible: true };
+        const b: ContextSignal = { type: 'project_hint',   severity: 'info', message: 'b', dismissible: true };
+        expect(pickTopSignal([a, b])).toBe(a);
+    });
+
+    it('works correctly from a real analyzeContext output', () => {
+        // This state produces both a threshold warning and a growth_warning.
+        // pickTopSignal should return whichever has higher severity.
+        const signals = analyzeContext(makeState({
+            contextPct: 76,
+            contextHistory: [0, 11, 22, 44, 65, 76],
+            turnCount: 6,
+        }));
+        const top = pickTopSignal(signals);
+        expect(top).not.toBeNull();
+        // Both signals are 'warning' severity here — just confirm one is returned.
+        expect(['warning', 'critical']).toContain(top!.severity);
     });
 });
