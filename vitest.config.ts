@@ -11,8 +11,19 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
-      include: ['lib/**', 'entrypoints/**'],
-      exclude: ['entrypoints/inject.ts'], // Self-contained MAIN world script — untestable in Node
+      // Only measure lib/ — entrypoints depend on browser APIs and cannot be
+      // unit tested without a real extension runtime. Enforcing thresholds on
+      // untestable code would make the coverage gate meaningless.
+      include: ['lib/**'],
+      exclude: [
+        'lib/adapters/types.ts', // interface-only file, no executable lines
+      ],
+      thresholds: {
+        lines: 85,
+        functions: 85,
+        branches: 80,
+        statements: 85,
+      },
     },
   },
 });

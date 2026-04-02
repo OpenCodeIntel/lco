@@ -1,0 +1,205 @@
+// tests/unit/bridge-validation.test.ts
+// Tests the actual isValidBridgeSchema import, not a mirror copy.
+
+import { describe, it, expect } from 'vitest';
+import { isValidBridgeSchema } from '../../lib/bridge-validation';
+import { LCO_NAMESPACE } from '../../lib/message-types';
+
+function base(overrides = {}) {
+    return {
+        namespace: LCO_NAMESPACE,
+        token: 'test-token-uuid',
+        type: 'TOKEN_BATCH',
+        inputTokens: 100,
+        outputTokens: 20,
+        model: 'claude-haiku-4-5',
+        platform: 'claude.ai',
+        ...overrides,
+    };
+}
+
+// ── Top-level guards ──────────────────────────────────────────────────────────
+
+describe('top-level guards', () => {
+    it('rejects null', () => {
+        expect(isValidBridgeSchema(null)).toBe(false);
+    });
+
+    it('rejects a string', () => {
+        expect(isValidBridgeSchema('hello')).toBe(false);
+    });
+
+    it('rejects a number', () => {
+        expect(isValidBridgeSchema(42)).toBe(false);
+    });
+
+    it('rejects an array', () => {
+        expect(isValidBridgeSchema([])).toBe(false);
+    });
+
+    it('rejects wrong namespace', () => {
+        expect(isValidBridgeSchema(base({ namespace: 'WRONG' }))).toBe(false);
+    });
+
+    it('rejects missing namespace', () => {
+        const { namespace: _, ...rest } = base();
+        expect(isValidBridgeSchema(rest)).toBe(false);
+    });
+
+    it('rejects empty token string', () => {
+        expect(isValidBridgeSchema(base({ token: '' }))).toBe(false);
+    });
+
+    it('rejects non-string token', () => {
+        expect(isValidBridgeSchema(base({ token: 123 }))).toBe(false);
+    });
+
+    it('rejects unknown message type', () => {
+        expect(isValidBridgeSchema(base({ type: 'UNKNOWN_TYPE' }))).toBe(false);
+    });
+
+    it('rejects missing type', () => {
+        const { type: _, ...rest } = base();
+        expect(isValidBridgeSchema(rest)).toBe(false);
+    });
+});
+
+// ── TOKEN_BATCH ───────────────────────────────────────────────────────────────
+
+describe('TOKEN_BATCH', () => {
+    it('accepts a valid TOKEN_BATCH message', () => {
+        expect(isValidBridgeSchema(base({ type: 'TOKEN_BATCH' }))).toBe(true);
+    });
+
+    it('rejects missing inputTokens', () => {
+        const { inputTokens: _, ...rest } = base({ type: 'TOKEN_BATCH' });
+        expect(isValidBridgeSchema(rest)).toBe(false);
+    });
+
+    it('rejects non-number inputTokens', () => {
+        expect(isValidBridgeSchema(base({ type: 'TOKEN_BATCH', inputTokens: '100' }))).toBe(false);
+    });
+
+    it('rejects missing outputTokens', () => {
+        const { outputTokens: _, ...rest } = base({ type: 'TOKEN_BATCH' });
+        expect(isValidBridgeSchema(rest)).toBe(false);
+    });
+
+    it('rejects missing model', () => {
+        const { model: _, ...rest } = base({ type: 'TOKEN_BATCH' });
+        expect(isValidBridgeSchema(rest)).toBe(false);
+    });
+
+    it('rejects non-string model', () => {
+        expect(isValidBridgeSchema(base({ type: 'TOKEN_BATCH', model: 99 }))).toBe(false);
+    });
+});
+
+// ── STREAM_COMPLETE ───────────────────────────────────────────────────────────
+
+describe('STREAM_COMPLETE', () => {
+    it('accepts a valid STREAM_COMPLETE message', () => {
+        expect(isValidBridgeSchema(base({ type: 'STREAM_COMPLETE' }))).toBe(true);
+    });
+
+    it('rejects missing inputTokens', () => {
+        const { inputTokens: _, ...rest } = base({ type: 'STREAM_COMPLETE' });
+        expect(isValidBridgeSchema(rest)).toBe(false);
+    });
+
+    it('rejects missing model', () => {
+        const { model: _, ...rest } = base({ type: 'STREAM_COMPLETE' });
+        expect(isValidBridgeSchema(rest)).toBe(false);
+    });
+});
+
+// ── HEALTH_BROKEN ─────────────────────────────────────────────────────────────
+
+describe('HEALTH_BROKEN', () => {
+    it('accepts a valid HEALTH_BROKEN message', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'HEALTH_BROKEN',
+            message: 'fetch failed',
+        })).toBe(true);
+    });
+
+    it('rejects missing message field', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'HEALTH_BROKEN',
+        })).toBe(false);
+    });
+
+    it('rejects non-string message field', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'HEALTH_BROKEN',
+            message: 404,
+        })).toBe(false);
+    });
+});
+
+// ── HEALTH_RECOVERED ──────────────────────────────────────────────────────────
+
+describe('HEALTH_RECOVERED', () => {
+    it('accepts a valid HEALTH_RECOVERED message', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'HEALTH_RECOVERED',
+            recoveredAt: Date.now(),
+        })).toBe(true);
+    });
+
+    it('rejects missing recoveredAt', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'HEALTH_RECOVERED',
+        })).toBe(false);
+    });
+
+    it('rejects non-number recoveredAt', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'HEALTH_RECOVERED',
+            recoveredAt: '2026-01-01',
+        })).toBe(false);
+    });
+});
+
+// ── MESSAGE_LIMIT_UPDATE ──────────────────────────────────────────────────────
+
+describe('MESSAGE_LIMIT_UPDATE', () => {
+    it('accepts a valid MESSAGE_LIMIT_UPDATE message', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'MESSAGE_LIMIT_UPDATE',
+            messageLimitUtilization: 0.72,
+            platform: 'claude.ai',
+        })).toBe(true);
+    });
+
+    it('rejects missing messageLimitUtilization', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'MESSAGE_LIMIT_UPDATE',
+        })).toBe(false);
+    });
+
+    it('rejects non-number messageLimitUtilization', () => {
+        expect(isValidBridgeSchema({
+            namespace: LCO_NAMESPACE,
+            token: 'tok',
+            type: 'MESSAGE_LIMIT_UPDATE',
+            messageLimitUtilization: '0.72',
+        })).toBe(false);
+    });
+});
