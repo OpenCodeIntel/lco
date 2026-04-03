@@ -35,9 +35,11 @@ const healthyScore: HealthScore = {
 };
 
 describe('applyRestoredConversation', () => {
-    it('restores context percentage from record', () => {
+    it('computes contextPct from cumulative tokens, not lastContextPct', () => {
+        // record has 12000 input + 8000 output = 20000 tokens, model = claude-sonnet-4-6 (200k window)
+        // 20000 / 200000 * 100 = 10%
         const result = applyRestoredConversation(INITIAL_STATE, makeRecord(), healthyScore);
-        expect(result.contextPct).toBe(38);
+        expect(result.contextPct).toBeCloseTo(10, 1);
     });
 
     it('restores session totals from record', () => {
@@ -79,10 +81,11 @@ describe('applyRestoredConversation', () => {
     });
 
     it('handles zero-cost record', () => {
-        const record = makeRecord({ estimatedCost: 0, turnCount: 1, lastContextPct: 0.5 });
+        // 12000 + 8000 = 20000 tokens / 200000 window = 10%
+        const record = makeRecord({ estimatedCost: 0, turnCount: 1 });
         const result = applyRestoredConversation(INITIAL_STATE, record, null);
         expect(result.session.totalCost).toBe(0);
-        expect(result.contextPct).toBe(0.5);
+        expect(result.contextPct).toBeCloseTo(10, 1);
     });
 
     it('handles null estimated cost', () => {

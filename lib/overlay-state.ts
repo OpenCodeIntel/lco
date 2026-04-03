@@ -3,7 +3,7 @@
 // Each function takes the current state and a payload, returns a new state object.
 // The content script calls these and passes the result to overlay.render().
 
-import { calculateCost } from './pricing';
+import { calculateCost, getContextWindowSize } from './pricing';
 import type { TabState, SessionCost } from './message-types';
 import type { HealthScore } from './health-score';
 import type { ConversationRecord } from './conversation-store';
@@ -118,18 +118,24 @@ export function applyMessageLimit(state: OverlayState, utilization: number): Ove
 
 /**
  * Restore overlay state from a previously stored ConversationRecord.
- * Called on page load and SPA navigation when LCO has existing data
- * for the conversation. Does not touch lastRequest or streaming fields
- * (those are driven by live SSE data only).
+ * Called on page load and SPA navigation when LCO has existing data.
+ * Computes contextPct from cumulative tokens (totalInputTokens + totalOutputTokens)
+ * rather than record.lastContextPct, which was stored as near-zero before
+ * cumulative tracking was introduced.
+ * Does not touch lastRequest or streaming (driven by live SSE only).
  */
 export function applyRestoredConversation(
     state: OverlayState,
     record: ConversationRecord,
     health: HealthScore | null,
 ): OverlayState {
+    const ctxWindow = getContextWindowSize(record.model) || 200000;
+    const contextPct = ctxWindow > 0
+        ? ((record.totalInputTokens + record.totalOutputTokens) / ctxWindow) * 100
+        : 0;
     return {
         ...state,
-        contextPct: record.lastContextPct,
+        contextPct,
         session: {
             requestCount: record.turnCount,
             totalInputTokens: record.totalInputTokens,
