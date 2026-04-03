@@ -4,7 +4,7 @@
 // The content script calls these and passes the result to overlay.render().
 
 import { calculateCost, getContextWindowSize } from './pricing';
-import type { TabState, SessionCost } from './message-types';
+import type { TabState } from './message-types';
 import type { HealthScore } from './health-score';
 import type { ConversationRecord } from './conversation-store';
 
@@ -80,14 +80,11 @@ export function applyStreamComplete(
 
 /** Applied after the background returns accurate BPE counts.
  *  Updates lastRequest with precise token counts from the background worker.
- *  Does NOT update session or contextPct: those are managed per-conversation
- *  by the content script using cumulative totals across all turns.
- *  Per-tab session data from the background would overwrite restored conversation
- *  state (e.g., showing "1 req" instead of "16 req" after a page reload). */
+ *  Session and contextPct are managed per-conversation by the content script;
+ *  per-tab data from the background would overwrite restored conversation state. */
 export function applyStorageResponse(
     state: OverlayState,
     tabState: TabState,
-    _sessionCost: SessionCost,
 ): OverlayState {
     return {
         ...state,

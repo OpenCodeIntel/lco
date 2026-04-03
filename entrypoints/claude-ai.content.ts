@@ -53,20 +53,21 @@ async function fetchStoredRecord(conversationId: string): Promise<ConversationRe
 
 /**
  * Build local conversation state from a stored record.
- * contextPct is computed from cumulative tokens — record.lastContextPct
- * was stored as near-zero before cumulative tracking was introduced.
+ * Uses the contextPct computed by applyRestoredConversation (cumulative tokens)
+ * to backfill contextHistory, since per-turn values stored before cumulative
+ * tracking are near-zero and produce meaningless growth rate data.
  */
-function buildConvStateFromRecord(record: ConversationRecord): ConversationState {
-    const ctxWindow = getContextWindowSize(record.model) || 200000;
-    const contextPct = ctxWindow > 0
-        ? ((record.totalInputTokens + record.totalOutputTokens) / ctxWindow) * 100
-        : 0;
+function buildConvStateFromRecord(record: ConversationRecord, contextPct: number): ConversationState {
     return {
         turnCount: record.turnCount,
         contextPct,
-        contextHistory: record.turns.map(t => t.contextPct),
+        // Backfill history with the current cumulative value for all turns.
+        // Stored per-turn values are near-zero (pre-cumulative tracking).
+        // A flat history produces a zero growth rate, which is correct:
+        // we have no real per-turn data to compute growth from.
+        contextHistory: record.turns.map(() => contextPct),
         model: record.model,
-        contextWindow: ctxWindow,
+        contextWindow: getContextWindowSize(record.model) || 200000,
     };
 }
 
@@ -87,6 +88,10 @@ async function initializeMonitoring(): Promise<void> {
     let cumulativeOutput = 0;
     let cumulativeCost = 0;
 
+    // Generation counter: incremented on each navigation. Async restore callbacks
+    // check this to avoid overwriting state from a newer conversation.
+    let navGeneration = 0;
+
     // Restore state from stored conversation record if one exists.
     // This gives the overlay correct context % and turn count immediately
     // on page load, instead of showing 0% until the user sends a message.
@@ -96,13 +101,16 @@ async function initializeMonitoring(): Promise<void> {
             cumulativeInput = record.totalInputTokens;
             cumulativeOutput = record.totalOutputTokens;
             cumulativeCost = record.estimatedCost ?? 0;
-            convState = buildConvStateFromRecord(record);
+            // applyRestoredConversation owns the contextPct formula.
+            // buildConvStateFromRecord receives it to avoid duplication.
+            state = applyRestoredConversation(state, record, null);
+            convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
             const health = computeHealthScore({
                 contextPct: convState.contextPct,
                 turnCount: convState.turnCount,
                 growthRate: computeGrowthRate(convState.contextHistory),
             });
-            state = applyRestoredConversation(state, record, health);
+            state = { ...state, health };
         }
     }
 
@@ -205,8 +213,8 @@ async function initializeMonitoring(): Promise<void> {
                 stopReason: msg.stopReason ?? null,
             } satisfies StoreTokenBatchMessage)
                 .then((response: StoreTokenBatchResponse) => {
-                    if (!response?.ok || !response.tabState || !response.sessionCost) return;
-                    state = applyStorageResponse(state, response.tabState, response.sessionCost);
+                    if (!response?.ok || !response.tabState) return;
+                    state = applyStorageResponse(state, response.tabState);
                     overlay.render(state);
                 })
                 .catch((err) => {
@@ -338,25 +346,28 @@ async function initializeMonitoring(): Promise<void> {
             cumulativeOutput = 0;
             cumulativeCost = 0;
             dismissed = new Set();
+            const thisGeneration = ++navGeneration;
             overlay.render(state);
             overlay.hideNudge();
 
             // Restore state from storage for the new conversation (if previously tracked).
+            // The generation guard prevents this callback from overwriting state if the
+            // user navigated again (or started streaming) before the fetch completed.
             if (newId) {
                 fetchStoredRecord(newId).then(record => {
-                    if (record) {
-                        cumulativeInput = record.totalInputTokens;
-                        cumulativeOutput = record.totalOutputTokens;
-                        cumulativeCost = record.estimatedCost ?? 0;
-                        convState = buildConvStateFromRecord(record);
-                        const health = computeHealthScore({
-                            contextPct: convState.contextPct,
-                            turnCount: convState.turnCount,
-                            growthRate: computeGrowthRate(convState.contextHistory),
-                        });
-                        state = applyRestoredConversation(state, record, health);
-                        overlay.render(state);
-                    }
+                    if (!record || navGeneration !== thisGeneration) return;
+                    cumulativeInput = record.totalInputTokens;
+                    cumulativeOutput = record.totalOutputTokens;
+                    cumulativeCost = record.estimatedCost ?? 0;
+                    state = applyRestoredConversation(state, record, null);
+                    convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+                    const health = computeHealthScore({
+                        contextPct: convState.contextPct,
+                        turnCount: convState.turnCount,
+                        growthRate: computeGrowthRate(convState.contextHistory),
+                    });
+                    state = { ...state, health };
+                    overlay.render(state);
                 });
             }
         });

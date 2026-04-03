@@ -12,7 +12,7 @@ import {
     applyMessageLimit,
 } from '../../lib/overlay-state';
 import type { OverlayState } from '../../lib/overlay-state';
-import type { TabState, SessionCost } from '../../lib/message-types';
+import type { TabState } from '../../lib/message-types';
 
 const MODEL = 'claude-haiku-4-5';
 const TOKEN_PAYLOAD = { inputTokens: 1000, outputTokens: 200, model: MODEL };
@@ -29,16 +29,6 @@ function makeTabState(overrides: Partial<TabState> = {}): TabState {
     };
 }
 
-function makeSessionCost(overrides: Partial<SessionCost> = {}): SessionCost {
-    return {
-        requestCount: 1,
-        totalInputTokens: 1000,
-        totalOutputTokens: 200,
-        estimatedCost: 0.002,
-        updatedAt: Date.now(),
-        ...overrides,
-    };
-}
 
 // ── INITIAL_STATE ─────────────────────────────────────────────────────────────
 
@@ -142,8 +132,7 @@ describe('applyStreamComplete', () => {
 describe('applyStorageResponse', () => {
     it('updates lastRequest from tabState', () => {
         const tab = makeTabState({ inputTokens: 5000, outputTokens: 800 });
-        const session = makeSessionCost();
-        const next = applyStorageResponse(INITIAL_STATE, tab, session);
+        const next = applyStorageResponse(INITIAL_STATE, tab);
         expect(next.lastRequest?.inputTokens).toBe(5000);
         expect(next.lastRequest?.outputTokens).toBe(800);
     });
@@ -153,10 +142,7 @@ describe('applyStorageResponse', () => {
             ...INITIAL_STATE,
             session: { requestCount: 15, totalInputTokens: 4000, totalOutputTokens: 2000, totalCost: 0.05 },
         };
-        const tab = makeTabState();
-        const session = makeSessionCost({ requestCount: 1, totalInputTokens: 100, estimatedCost: 0.001 });
-        const next = applyStorageResponse(state, tab, session);
-        // Session should NOT be overwritten by per-tab sessionCost
+        const next = applyStorageResponse(state, makeTabState());
         expect(next.session.requestCount).toBe(15);
         expect(next.session.totalInputTokens).toBe(4000);
         expect(next.session.totalCost).toBe(0.05);
@@ -164,21 +150,20 @@ describe('applyStorageResponse', () => {
 
     it('preserves contextPct (managed per-conversation by content script)', () => {
         const state: OverlayState = { ...INITIAL_STATE, contextPct: 2.5 };
-        const tab = makeTabState({ inputTokens: 100000, outputTokens: 0 });
-        const next = applyStorageResponse(state, tab, makeSessionCost());
+        const next = applyStorageResponse(state, makeTabState({ inputTokens: 100000, outputTokens: 0 }));
         expect(next.contextPct).toBe(2.5);
     });
 
     it('updates messageLimitUtilization from tabState', () => {
         const tab = makeTabState({ messageLimitUtilization: 0.65 });
-        const next = applyStorageResponse(INITIAL_STATE, tab, makeSessionCost());
+        const next = applyStorageResponse(INITIAL_STATE, tab);
         expect(next.messageLimitUtilization).toBe(0.65);
     });
 
     it('preserves existing messageLimitUtilization when tabState has none', () => {
         const state: OverlayState = { ...INITIAL_STATE, messageLimitUtilization: 0.5 };
         const { messageLimitUtilization: _, ...tabWithoutLimit } = makeTabState();
-        const next = applyStorageResponse(state, tabWithoutLimit as TabState, makeSessionCost());
+        const next = applyStorageResponse(state, tabWithoutLimit as TabState);
         expect(next.messageLimitUtilization).toBe(0.5);
     });
 });
