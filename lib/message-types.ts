@@ -117,8 +117,30 @@ export interface StoreMessageLimitMessage {
     messageLimitUtilization: number;
 }
 
+/** Record a completed turn for persistent conversation storage */
+export interface RecordTurnMessage {
+    type: 'RECORD_TURN';
+    conversationId: string;
+    inputTokens: number;
+    outputTokens: number;
+    model: string;
+    contextPct: number;
+    cost: number | null;
+}
+
+/** Mark a conversation as finalized (user navigated away or tab closed) */
+export interface FinalizeConversationMessage {
+    type: 'FINALIZE_CONVERSATION';
+    conversationId: string;
+}
+
 /** Union of all valid messages the background script will handle */
-export type BackgroundMessage = CountTokensMessage | StoreTokenBatchMessage | StoreMessageLimitMessage;
+export type BackgroundMessage =
+    | CountTokensMessage
+    | StoreTokenBatchMessage
+    | StoreMessageLimitMessage
+    | RecordTurnMessage
+    | FinalizeConversationMessage;
 
 /** Response returned by the background after STORE_TOKEN_BATCH */
 export interface StoreTokenBatchResponse {

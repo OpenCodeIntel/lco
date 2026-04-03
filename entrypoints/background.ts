@@ -6,6 +6,17 @@ import { Tiktoken } from 'js-tiktoken/lite';
 import claudeJson from '@anthropic-ai/tokenizer/claude.json';
 import type { BackgroundMessage, TabState, SessionCost } from '../lib/message-types';
 import { calculateCost } from '../lib/pricing';
+import {
+    setStorage,
+    recordTurn,
+    finalizeConversation,
+    computeDailySummary,
+    computeWeeklySummary,
+    pruneConversations,
+    todayDateString,
+    isoWeekId,
+    RETENTION_DAYS,
+} from '../lib/conversation-store';
 
 let _tokenizer: Tiktoken | null = null;
 let _initPromise: Promise<Tiktoken> | null = null;
@@ -118,7 +129,19 @@ async function writeMessageLimit(
 
 /** Remove all storage keys associated with a specific tab */
 async function cleanTabStorage(tabId: number): Promise<void> {
-  await browser.storage.session.remove([tabStateKey(tabId), sessionCostKey(tabId)]);
+  // Finalize any active conversation for this tab before cleaning up.
+  const activeConvKey = `activeConv_${tabId}`;
+  const data = await browser.storage.session.get([activeConvKey]);
+  const convId = data[activeConvKey] as string | undefined;
+  if (convId) {
+    await finalizeConversation(convId).catch(() => { /* non-critical */ });
+  }
+
+  await browser.storage.session.remove([
+    tabStateKey(tabId),
+    sessionCostKey(tabId),
+    activeConvKey,
+  ]);
   console.log(`[LCO] Cleaned storage for closed tab: ${tabId}`);
 }
 
@@ -131,7 +154,7 @@ async function cleanOrphanedTabs(): Promise<void> {
 
   const activeIds = new Set(allTabs.map((t) => String(t.id)));
   const orphanKeys = Object.keys(allData).filter((key) => {
-    const match = key.match(/^(?:tabState|sessionCost)_(\d+)$/);
+    const match = key.match(/^(?:tabState|sessionCost|activeConv)_(\d+)$/);
     return match && !activeIds.has(match[1]);
   });
 
@@ -145,6 +168,9 @@ export default defineBackground({
   type: 'module',
   main: () => {
     console.log('[LCO] Service worker booted; pure-JS tokenizer preloading in background.');
+
+    // Initialize conversation store with chrome.storage.local as the backing storage.
+    setStorage(browser.storage.local as any);
 
     // Handle all incoming messages from Room 2 (content scripts)
     // Note: return true inside any branch that uses sendResponse asynchronously.
@@ -199,6 +225,44 @@ export default defineBackground({
         return true; // Keep channel open for async response
       }
 
+      // Persist a completed turn to chrome.storage.local for conversation history.
+      if (message.type === 'RECORD_TURN') {
+        const tabId = sender.tab?.id;
+        recordTurn(message.conversationId, {
+          inputTokens: message.inputTokens,
+          outputTokens: message.outputTokens,
+          model: message.model,
+          contextPct: message.contextPct,
+          cost: message.cost,
+          completedAt: Date.now(),
+        })
+          .then(() => {
+            // Track the active conversation for this tab so tab-close can finalize it.
+            if (tabId !== undefined) {
+              browser.storage.session.set({
+                [`activeConv_${tabId}`]: message.conversationId,
+              }).catch(() => { /* non-critical */ });
+            }
+            sendResponse({ ok: true });
+          })
+          .catch((err) => {
+            console.error('[LCO-ERROR] Failed to record conversation turn:', err);
+            sendResponse({ ok: false });
+          });
+        return true;
+      }
+
+      // Mark a conversation as finalized (user navigated to a different chat or closed the tab).
+      if (message.type === 'FINALIZE_CONVERSATION') {
+        finalizeConversation(message.conversationId)
+          .then(() => sendResponse({ ok: true }))
+          .catch((err) => {
+            console.error('[LCO-ERROR] Failed to finalize conversation:', err);
+            sendResponse({ ok: false });
+          });
+        return true;
+      }
+
       // Message limit utilization from the SSE message_limit event
       if (message.type === 'STORE_MESSAGE_LIMIT') {
         const tabId = sender.tab?.id;
@@ -225,13 +289,38 @@ export default defineBackground({
       });
     });
 
-    // Periodic orphan cleanup via alarms (setInterval is unreliable in service workers)
+    // Periodic alarms (setInterval is unreliable in service workers; chrome.alarms persists)
     browser.alarms.create('cleanOrphanedTabs', { periodInMinutes: 5 });
+    browser.alarms.create('computeDailySummary', { periodInMinutes: 30 });
+    browser.alarms.create('computeWeeklySummary', { periodInMinutes: 360 });
+    browser.alarms.create('pruneOldData', { periodInMinutes: 1440 });
+
     browser.alarms.onAlarm.addListener((alarm) => {
-      if (alarm.name !== 'cleanOrphanedTabs') return;
-      cleanOrphanedTabs().catch((err) => {
-        console.error('[LCO-ERROR] Orphan cleanup failed:', err);
-      });
+      if (alarm.name === 'cleanOrphanedTabs') {
+        cleanOrphanedTabs().catch((err) => {
+          console.error('[LCO-ERROR] Orphan cleanup failed:', err);
+        });
+        return;
+      }
+      if (alarm.name === 'computeDailySummary') {
+        computeDailySummary(todayDateString()).catch((err) => {
+          console.error('[LCO-ERROR] Daily summary computation failed:', err);
+        });
+        return;
+      }
+      if (alarm.name === 'computeWeeklySummary') {
+        computeWeeklySummary(isoWeekId(Date.now())).catch((err) => {
+          console.error('[LCO-ERROR] Weekly summary computation failed:', err);
+        });
+        return;
+      }
+      if (alarm.name === 'pruneOldData') {
+        const cutoff = Date.now() - RETENTION_DAYS * 86400000;
+        pruneConversations(cutoff).catch((err) => {
+          console.error('[LCO-ERROR] Data pruning failed:', err);
+        });
+        return;
+      }
     });
   },
 });

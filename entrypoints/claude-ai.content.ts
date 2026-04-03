@@ -2,7 +2,7 @@
 // Thin orchestrator: validates bridge messages, drives state transitions, renders overlay.
 // All logic lives in imported modules; this file only wires them together.
 
-import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse } from '../lib/message-types';
+import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage } from '../lib/message-types';
 import { LCO_NAMESPACE } from '../lib/message-types';
 import { isValidBridgeSchema } from '../lib/bridge-validation';
 import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit } from '../lib/overlay-state';
@@ -11,7 +11,8 @@ import { showEnableBanner } from '../ui/enable-banner';
 import { ClaudeAdapter } from '../lib/adapters/claude';
 import { analyzeContext, shouldDismiss, signalKey, pickTopSignal } from '../lib/context-intelligence';
 import type { ConversationState, ContextSignal } from '../lib/context-intelligence';
-import { getContextWindowSize } from '../lib/pricing';
+import { getContextWindowSize, calculateCost } from '../lib/pricing';
+import { extractConversationId } from '../lib/conversation-store';
 
 export default defineContentScript({
     matches: ['https://claude.ai/*'],
@@ -37,6 +38,7 @@ async function initializeMonitoring(): Promise<void> {
     let state = { ...INITIAL_STATE };
     let convState = freshConvState();
     let dismissed = new Set<string>();
+    let currentConversationId = extractConversationId(window.location.href);
 
     // 5-layer message bridge: Main World (inject.js) → Service Worker
     // Registered synchronously before any await so no events are dropped
@@ -82,6 +84,21 @@ async function initializeMonitoring(): Promise<void> {
                 overlay.showNudge(top, () => { dismissed.add(signalKey(top)); });
             } else {
                 overlay.hideNudge();
+            }
+
+            // Persist turn to conversation history in chrome.storage.local.
+            if (currentConversationId) {
+                browser.runtime.sendMessage({
+                    type: 'RECORD_TURN',
+                    conversationId: currentConversationId,
+                    inputTokens: msg.inputTokens,
+                    outputTokens: msg.outputTokens,
+                    model: msg.model,
+                    contextPct: state.contextPct ?? 0,
+                    cost: calculateCost(msg.inputTokens, msg.outputTokens, msg.model),
+                } satisfies RecordTurnMessage).catch((err) => {
+                    console.error('[LCO-ERROR] Failed to record conversation turn:', err);
+                });
             }
 
             browser.runtime.sendMessage({
@@ -167,9 +184,23 @@ async function initializeMonitoring(): Promise<void> {
     overlay.mount(shadow);
 
     // Reset overlay, conversation state, and dismissed nudges on SPA navigation (Chrome 102+).
+    // Also finalize the previous conversation and detect the new one.
     if ('navigation' in window) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (window as any).navigation.addEventListener('navigatesuccess', () => {
+            const newId = extractConversationId(window.location.href);
+
+            // Finalize the old conversation if navigating to a different one.
+            if (currentConversationId && currentConversationId !== newId) {
+                browser.runtime.sendMessage({
+                    type: 'FINALIZE_CONVERSATION',
+                    conversationId: currentConversationId,
+                } satisfies FinalizeConversationMessage).catch((err) => {
+                    console.error('[LCO-ERROR] Failed to finalize conversation:', err);
+                });
+            }
+            currentConversationId = newId;
+
             state = { ...INITIAL_STATE };
             convState = freshConvState();
             dismissed = new Set();
