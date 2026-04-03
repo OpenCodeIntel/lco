@@ -58,7 +58,7 @@ export default function ActiveConversation({ conv, health }: Props) {
                         style={{ width: `${Math.min(contextPct, 100)}%` }}
                     />
                 </div>
-                <span className="lco-dash-context-label">{contextPct}% context</span>
+                <span className="lco-dash-context-label">{Math.round(contextPct)}% context</span>
             </div>
 
             <div className="lco-dash-active-stats">
