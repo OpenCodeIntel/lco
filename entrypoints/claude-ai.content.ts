@@ -13,6 +13,7 @@ import { analyzeContext, shouldDismiss, signalKey, pickTopSignal } from '../lib/
 import type { ConversationState, ContextSignal } from '../lib/context-intelligence';
 import { getContextWindowSize, calculateCost } from '../lib/pricing';
 import { extractConversationId } from '../lib/conversation-store';
+import { computeHealthScore, computeGrowthRate } from '../lib/health-score';
 
 export default defineContentScript({
     matches: ['https://claude.ai/*'],
@@ -78,6 +79,19 @@ async function initializeMonitoring(): Promise<void> {
                 model: msg.model,
                 contextWindow: getContextWindowSize(msg.model) || 200000,
             };
+
+            // Compute health score and attach to overlay state.
+            const growthRate = computeGrowthRate(convState.contextHistory);
+            state = {
+                ...state,
+                health: computeHealthScore({
+                    contextPct: convState.contextPct,
+                    turnCount: convState.turnCount,
+                    growthRate,
+                }),
+            };
+            overlay.render(state);
+
             const active = analyzeContext(convState).filter(s => !shouldDismiss(s, dismissed));
             const top = pickTopSignal(active);
             if (top) {

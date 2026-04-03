@@ -5,6 +5,7 @@
 
 import { calculateCost, getContextWindowSize } from './pricing';
 import type { TabState, SessionCost } from './message-types';
+import type { HealthScore } from './health-score';
 
 export interface OverlayState {
     lastRequest: {
@@ -23,6 +24,8 @@ export interface OverlayState {
     contextPct: number | null;
     healthBroken: string | null;
     streaming: boolean;
+    /** Conversation health assessment. Null until first STREAM_COMPLETE. */
+    health: HealthScore | null;
 }
 
 export const INITIAL_STATE: Readonly<OverlayState> = {
@@ -32,6 +35,7 @@ export const INITIAL_STATE: Readonly<OverlayState> = {
     contextPct: null,
     healthBroken: null,
     streaming: false,
+    health: null,
 };
 
 function computeContextPct(
