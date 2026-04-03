@@ -71,20 +71,41 @@ async function initializeMonitoring(): Promise<void> {
     let dismissed = new Set<string>();
     let currentConversationId = extractConversationId(window.location.href);
 
+    // Per-conversation cumulative token tracking.
+    // inject.ts only captures the user's latest message text (not the full
+    // API input context), so per-message tokens are a fraction of the real
+    // context usage. Cumulative totals across all turns approximate the
+    // actual conversation size in the context window.
+    let cumulativeInput = 0;
+    let cumulativeOutput = 0;
+    let cumulativeCost = 0;
+
     // Restore state from stored conversation record if one exists.
     // This gives the overlay correct context % and turn count immediately
     // on page load, instead of showing 0% until the user sends a message.
     if (currentConversationId) {
         const restored = await restoreFromStorage(currentConversationId);
         if (restored) {
-            convState = restored.convState;
+            cumulativeInput = restored.record.totalInputTokens;
+            cumulativeOutput = restored.record.totalOutputTokens;
+            cumulativeCost = restored.record.estimatedCost ?? 0;
+
+            // Compute contextPct from cumulative tokens instead of record.lastContextPct.
+            // Old records stored before cumulative tracking have lastContextPct near zero.
+            const ctxWindow = restored.convState.contextWindow;
+            const restoredContextPct = ctxWindow > 0
+                ? ((cumulativeInput + cumulativeOutput) / ctxWindow) * 100
+                : 0;
+            convState = { ...restored.convState, contextPct: restoredContextPct };
+
             const growthRate = computeGrowthRate(convState.contextHistory);
             const health = computeHealthScore({
-                contextPct: convState.contextPct,
+                contextPct: restoredContextPct,
                 turnCount: convState.turnCount,
                 growthRate,
             });
             state = applyRestoredConversation(state, restored.record, health);
+            state = { ...state, contextPct: restoredContextPct };
         }
     }
 
@@ -118,13 +139,36 @@ async function initializeMonitoring(): Promise<void> {
             state = applyStreamComplete(state, msg);
             overlay.render(state);
 
+            // Update cumulative conversation tokens and compute contextPct.
+            cumulativeInput += msg.inputTokens;
+            cumulativeOutput += msg.outputTokens;
+            const msgCost = calculateCost(msg.inputTokens, msg.outputTokens, msg.model);
+            cumulativeCost += msgCost ?? 0;
+
+            const ctxWindow = getContextWindowSize(msg.model) || 200000;
+            const cumulativeContextPct = ctxWindow > 0
+                ? ((cumulativeInput + cumulativeOutput) / ctxWindow) * 100
+                : 0;
+
+            state = {
+                ...state,
+                contextPct: cumulativeContextPct,
+                session: {
+                    requestCount: convState.turnCount + 1,
+                    totalInputTokens: cumulativeInput,
+                    totalOutputTokens: cumulativeOutput,
+                    totalCost: cumulativeCost,
+                },
+            };
+            overlay.render(state);
+
             // Update conversation state and evaluate signals after each complete turn.
             convState = {
                 turnCount: convState.turnCount + 1,
-                contextPct: state.contextPct ?? 0,
-                contextHistory: [...convState.contextHistory, state.contextPct ?? 0],
+                contextPct: cumulativeContextPct,
+                contextHistory: [...convState.contextHistory, cumulativeContextPct],
                 model: msg.model,
-                contextWindow: getContextWindowSize(msg.model) || 200000,
+                contextWindow: ctxWindow,
             };
 
             // Compute health score and attach to overlay state.
@@ -296,6 +340,9 @@ async function initializeMonitoring(): Promise<void> {
 
             state = { ...INITIAL_STATE };
             convState = freshConvState();
+            cumulativeInput = 0;
+            cumulativeOutput = 0;
+            cumulativeCost = 0;
             dismissed = new Set();
             overlay.render(state);
             overlay.hideNudge();
@@ -304,14 +351,24 @@ async function initializeMonitoring(): Promise<void> {
             if (newId) {
                 restoreFromStorage(newId).then(restored => {
                     if (restored) {
-                        convState = restored.convState;
+                        cumulativeInput = restored.record.totalInputTokens;
+                        cumulativeOutput = restored.record.totalOutputTokens;
+                        cumulativeCost = restored.record.estimatedCost ?? 0;
+
+                        const ctxWindow = restored.convState.contextWindow;
+                        const restoredContextPct = ctxWindow > 0
+                            ? ((cumulativeInput + cumulativeOutput) / ctxWindow) * 100
+                            : 0;
+                        convState = { ...restored.convState, contextPct: restoredContextPct };
+
                         const growthRate = computeGrowthRate(convState.contextHistory);
                         const health = computeHealthScore({
-                            contextPct: convState.contextPct,
+                            contextPct: restoredContextPct,
                             turnCount: convState.turnCount,
                             growthRate,
                         });
                         state = applyRestoredConversation(state, restored.record, health);
+                        state = { ...state, contextPct: restoredContextPct };
                         overlay.render(state);
                     }
                 });

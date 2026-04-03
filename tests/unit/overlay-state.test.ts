@@ -82,17 +82,15 @@ describe('applyTokenBatch', () => {
         expect(next.healthBroken).toBeNull();
     });
 
-    it('computes contextPct for known model', () => {
-        const next = applyTokenBatch(INITIAL_STATE, TOKEN_PAYLOAD);
-        // 1200 tokens / 200000 context window * 100 = 0.6%
-        expect(next.contextPct).toBeCloseTo(0.6, 1);
+    it('preserves contextPct from prior state (cumulative tracking lives in content script)', () => {
+        const withContext: OverlayState = { ...INITIAL_STATE, contextPct: 12.5 };
+        const next = applyTokenBatch(withContext, TOKEN_PAYLOAD);
+        expect(next.contextPct).toBe(12.5);
     });
 
-    it('uses DEFAULT_CONTEXT_WINDOW for unknown models instead of falling back', () => {
-        // Unknown models fall back to 200k context window, so contextPct is still computed.
-        const next = applyTokenBatch(INITIAL_STATE, { ...TOKEN_PAYLOAD, model: 'unknown-model-xyz' });
-        // 1200 tokens / 200000 default window * 100 = 0.6%
-        expect(next.contextPct).toBeCloseTo(0.6, 1);
+    it('preserves null contextPct when no prior value exists', () => {
+        const next = applyTokenBatch(INITIAL_STATE, TOKEN_PAYLOAD);
+        expect(next.contextPct).toBeNull();
     });
 
     it('does not mutate the original state', () => {
@@ -150,20 +148,25 @@ describe('applyStorageResponse', () => {
         expect(next.lastRequest?.outputTokens).toBe(800);
     });
 
-    it('updates session totals from sessionCost', () => {
+    it('preserves session totals (managed per-conversation by content script)', () => {
+        const state: OverlayState = {
+            ...INITIAL_STATE,
+            session: { requestCount: 15, totalInputTokens: 4000, totalOutputTokens: 2000, totalCost: 0.05 },
+        };
         const tab = makeTabState();
-        const session = makeSessionCost({ requestCount: 7, totalInputTokens: 14000, estimatedCost: 0.1 });
-        const next = applyStorageResponse(INITIAL_STATE, tab, session);
-        expect(next.session.requestCount).toBe(7);
-        expect(next.session.totalInputTokens).toBe(14000);
-        expect(next.session.totalCost).toBe(0.1);
+        const session = makeSessionCost({ requestCount: 1, totalInputTokens: 100, estimatedCost: 0.001 });
+        const next = applyStorageResponse(state, tab, session);
+        // Session should NOT be overwritten by per-tab sessionCost
+        expect(next.session.requestCount).toBe(15);
+        expect(next.session.totalInputTokens).toBe(4000);
+        expect(next.session.totalCost).toBe(0.05);
     });
 
-    it('maps absent estimatedCost to null totalCost', () => {
-        const tab = makeTabState();
-        const { estimatedCost: _, ...sessionWithoutCost } = makeSessionCost();
-        const next = applyStorageResponse(INITIAL_STATE, tab, sessionWithoutCost as SessionCost);
-        expect(next.session.totalCost).toBeNull();
+    it('preserves contextPct (managed per-conversation by content script)', () => {
+        const state: OverlayState = { ...INITIAL_STATE, contextPct: 2.5 };
+        const tab = makeTabState({ inputTokens: 100000, outputTokens: 0 });
+        const next = applyStorageResponse(state, tab, makeSessionCost());
+        expect(next.contextPct).toBe(2.5);
     });
 
     it('updates messageLimitUtilization from tabState', () => {
@@ -177,13 +180,6 @@ describe('applyStorageResponse', () => {
         const { messageLimitUtilization: _, ...tabWithoutLimit } = makeTabState();
         const next = applyStorageResponse(state, tabWithoutLimit as TabState, makeSessionCost());
         expect(next.messageLimitUtilization).toBe(0.5);
-    });
-
-    it('computes contextPct from tabState token counts', () => {
-        const tab = makeTabState({ inputTokens: 100000, outputTokens: 0 });
-        const next = applyStorageResponse(INITIAL_STATE, tab, makeSessionCost());
-        // 100000 / 200000 * 100 = 50%
-        expect(next.contextPct).toBeCloseTo(50, 0);
     });
 });
 

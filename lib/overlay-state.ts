@@ -3,7 +3,7 @@
 // Each function takes the current state and a payload, returns a new state object.
 // The content script calls these and passes the result to overlay.render().
 
-import { calculateCost, getContextWindowSize } from './pricing';
+import { calculateCost } from './pricing';
 import type { TabState, SessionCost } from './message-types';
 import type { HealthScore } from './health-score';
 import type { ConversationRecord } from './conversation-store';
@@ -39,18 +39,11 @@ export const INITIAL_STATE: Readonly<OverlayState> = {
     health: null,
 };
 
-function computeContextPct(
-    inputTokens: number,
-    outputTokens: number,
-    model: string,
-    fallback: number | null,
-): number | null {
-    const ctxSize = getContextWindowSize(model);
-    if (ctxSize <= 0) return fallback;
-    return (inputTokens + outputTokens) / ctxSize * 100;
-}
 
-/** Handles TOKEN_BATCH: live update during stream. Clears any prior health warning. */
+/** Handles TOKEN_BATCH: live update during stream. Clears any prior health warning.
+ *  Does NOT update contextPct: inject.ts only captures the user's latest message
+ *  tokens (not the full conversation context), so per-message contextPct is near-zero.
+ *  The content script computes contextPct from cumulative conversation tokens instead. */
 export function applyTokenBatch(
     state: OverlayState,
     payload: { inputTokens: number; outputTokens: number; model: string },
@@ -63,7 +56,6 @@ export function applyTokenBatch(
             model: payload.model,
             cost: calculateCost(payload.inputTokens, payload.outputTokens, payload.model),
         },
-        contextPct: computeContextPct(payload.inputTokens, payload.outputTokens, payload.model, state.contextPct),
         healthBroken: null,
         streaming: true,
     };
@@ -86,11 +78,16 @@ export function applyStreamComplete(
     };
 }
 
-/** Applied after the background returns accurate BPE counts and session totals. */
+/** Applied after the background returns accurate BPE counts.
+ *  Updates lastRequest with precise token counts from the background worker.
+ *  Does NOT update session or contextPct: those are managed per-conversation
+ *  by the content script using cumulative totals across all turns.
+ *  Per-tab session data from the background would overwrite restored conversation
+ *  state (e.g., showing "1 req" instead of "16 req" after a page reload). */
 export function applyStorageResponse(
     state: OverlayState,
     tabState: TabState,
-    sessionCost: SessionCost,
+    _sessionCost: SessionCost,
 ): OverlayState {
     return {
         ...state,
@@ -100,13 +97,6 @@ export function applyStorageResponse(
             model: tabState.model,
             cost: calculateCost(tabState.inputTokens, tabState.outputTokens, tabState.model),
         },
-        session: {
-            requestCount: sessionCost.requestCount,
-            totalInputTokens: sessionCost.totalInputTokens,
-            totalOutputTokens: sessionCost.totalOutputTokens,
-            totalCost: sessionCost.estimatedCost ?? null,
-        },
-        contextPct: computeContextPct(tabState.inputTokens, tabState.outputTokens, tabState.model, state.contextPct),
         messageLimitUtilization: tabState.messageLimitUtilization ?? state.messageLimitUtilization,
     };
 }
