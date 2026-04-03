@@ -6,6 +6,7 @@
 import { calculateCost, getContextWindowSize } from './pricing';
 import type { TabState, SessionCost } from './message-types';
 import type { HealthScore } from './health-score';
+import type { ConversationRecord } from './conversation-store';
 
 export interface OverlayState {
     lastRequest: {
@@ -123,4 +124,28 @@ export function applyHealthRecovered(state: OverlayState): OverlayState {
 /** Handles MESSAGE_LIMIT_UPDATE: store usage cap utilization. */
 export function applyMessageLimit(state: OverlayState, utilization: number): OverlayState {
     return { ...state, messageLimitUtilization: utilization };
+}
+
+/**
+ * Restore overlay state from a previously stored ConversationRecord.
+ * Called on page load and SPA navigation when LCO has existing data
+ * for the conversation. Does not touch lastRequest or streaming fields
+ * (those are driven by live SSE data only).
+ */
+export function applyRestoredConversation(
+    state: OverlayState,
+    record: ConversationRecord,
+    health: HealthScore | null,
+): OverlayState {
+    return {
+        ...state,
+        contextPct: record.lastContextPct,
+        session: {
+            requestCount: record.turnCount,
+            totalInputTokens: record.totalInputTokens,
+            totalOutputTokens: record.totalOutputTokens,
+            totalCost: record.estimatedCost,
+        },
+        health,
+    };
 }

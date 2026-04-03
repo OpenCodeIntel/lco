@@ -5,14 +5,15 @@
 import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage } from '../lib/message-types';
 import { LCO_NAMESPACE } from '../lib/message-types';
 import { isValidBridgeSchema } from '../lib/bridge-validation';
-import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit } from '../lib/overlay-state';
+import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation } from '../lib/overlay-state';
 import { createOverlay } from '../ui/overlay';
 import { showEnableBanner } from '../ui/enable-banner';
 import { ClaudeAdapter } from '../lib/adapters/claude';
 import { analyzeContext, shouldDismiss, signalKey, pickTopSignal } from '../lib/context-intelligence';
 import type { ConversationState, ContextSignal } from '../lib/context-intelligence';
 import { getContextWindowSize, calculateCost } from '../lib/pricing';
-import { extractConversationId, getConversation } from '../lib/conversation-store';
+import { extractConversationId } from '../lib/conversation-store';
+import type { ConversationRecord } from '../lib/conversation-store';
 import { computeHealthScore, computeGrowthRate } from '../lib/health-score';
 import { buildHandoffSummary } from '../lib/handoff-summary';
 
@@ -34,6 +35,34 @@ function freshConvState(): ConversationState {
     return { turnCount: 0, contextPct: 0, contextHistory: [], model: '', contextWindow: 200000 };
 }
 
+/**
+ * Restore conversation state from a previously stored record.
+ * Returns null if no record exists (first-time conversation).
+ */
+async function restoreFromStorage(conversationId: string): Promise<{
+    convState: ConversationState;
+    record: ConversationRecord;
+} | null> {
+    try {
+        const record: ConversationRecord | null = await browser.runtime.sendMessage({
+            type: 'GET_CONVERSATION',
+            conversationId,
+        });
+        if (!record || record.turnCount === 0) return null;
+
+        const convState: ConversationState = {
+            turnCount: record.turnCount,
+            contextPct: record.lastContextPct,
+            contextHistory: record.turns.map(t => t.contextPct),
+            model: record.model,
+            contextWindow: getContextWindowSize(record.model) || 200000,
+        };
+        return { convState, record };
+    } catch {
+        return null;
+    }
+}
+
 async function initializeMonitoring(): Promise<void> {
     const sessionToken = crypto.randomUUID();
     const overlay = createOverlay();
@@ -41,6 +70,23 @@ async function initializeMonitoring(): Promise<void> {
     let convState = freshConvState();
     let dismissed = new Set<string>();
     let currentConversationId = extractConversationId(window.location.href);
+
+    // Restore state from stored conversation record if one exists.
+    // This gives the overlay correct context % and turn count immediately
+    // on page load, instead of showing 0% until the user sends a message.
+    if (currentConversationId) {
+        const restored = await restoreFromStorage(currentConversationId);
+        if (restored) {
+            convState = restored.convState;
+            const growthRate = computeGrowthRate(convState.contextHistory);
+            const health = computeHealthScore({
+                contextPct: convState.contextPct,
+                turnCount: convState.turnCount,
+                growthRate,
+            });
+            state = applyRestoredConversation(state, restored.record, health);
+        }
+    }
 
     // 5-layer message bridge: Main World (inject.js) → Service Worker
     // Registered synchronously before any await so no events are dropped
@@ -253,6 +299,23 @@ async function initializeMonitoring(): Promise<void> {
             dismissed = new Set();
             overlay.render(state);
             overlay.hideNudge();
+
+            // Restore state from storage for the new conversation (if previously tracked).
+            if (newId) {
+                restoreFromStorage(newId).then(restored => {
+                    if (restored) {
+                        convState = restored.convState;
+                        const growthRate = computeGrowthRate(convState.contextHistory);
+                        const health = computeHealthScore({
+                            contextPct: convState.contextPct,
+                            turnCount: convState.turnCount,
+                            growthRate,
+                        });
+                        state = applyRestoredConversation(state, restored.record, health);
+                        overlay.render(state);
+                    }
+                });
+            }
         });
     }
 }
