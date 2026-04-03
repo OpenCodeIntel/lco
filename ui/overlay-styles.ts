@@ -144,6 +144,42 @@ export const OVERLAY_CSS = `
   margin: 5px 0;
 }
 
+/* ── Health indicator ── */
+
+.lco-health-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 0 2px;
+}
+
+.lco-health-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.lco-health-dot--healthy   { background: #4ade80; box-shadow: 0 0 4px rgba(74, 222, 128, 0.4); }
+.lco-health-dot--degrading { background: #fbbf24; box-shadow: 0 0 4px rgba(251, 191, 36, 0.4); }
+.lco-health-dot--critical  { background: #f87171; box-shadow: 0 0 4px rgba(248, 113, 113, 0.4); }
+
+.lco-health-label {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.lco-health-label--healthy   { color: #4ade80; }
+.lco-health-label--degrading { color: #fbbf24; }
+.lco-health-label--critical  { color: #f87171; }
+
+.lco-coaching {
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--lco-muted);
+  margin: 2px 0 3px;
+}
+
 /* ── Progress bars ── */
 
 .lco-bar-row {
@@ -177,6 +213,10 @@ export const OVERLAY_CSS = `
   background: var(--lco-warn-fill);
   box-shadow: 0 0 6px var(--lco-warn-glow);
 }
+
+.lco-bar-fill--healthy   { background: #4ade80; box-shadow: 0 0 6px rgba(74, 222, 128, 0.3); }
+.lco-bar-fill--degrading { background: #fbbf24; box-shadow: 0 0 6px rgba(251, 191, 36, 0.3); }
+.lco-bar-fill--critical  { background: #f87171; box-shadow: 0 0 6px rgba(248, 113, 113, 0.3); }
 
 .lco-bar-fill.lco-streaming {
   animation: lco-bar-pulse 1.2s ease-in-out infinite;

@@ -30,9 +30,13 @@ export function createOverlay(): OverlayHandle {
     // DOM refs — null until mount() is called. render() is a no-op until then.
     let overlayWidget: HTMLDivElement | null = null;
     let elCurrentRequest: HTMLElement | null = null;
+    let elHealthRow: HTMLElement | null = null;
+    let elHealthDot: HTMLElement | null = null;
+    let elHealthLabel: HTMLElement | null = null;
     let elContextRow: HTMLElement | null = null;
     let elContextFill: HTMLElement | null = null;
     let elContextLabel: HTMLElement | null = null;
+    let elCoaching: HTMLElement | null = null;
     let elLimitRow: HTMLElement | null = null;
     let elLimitFill: HTMLElement | null = null;
     let elLimitLabel: HTMLElement | null = null;
@@ -91,7 +95,22 @@ export function createOverlay(): OverlayHandle {
         rowLast.appendChild(valLast);
         body.appendChild(rowLast);
 
-        // Context window bar
+        // Health indicator: colored dot + label
+        const healthRow = document.createElement('div');
+        healthRow.className = 'lco-health-row';
+        healthRow.style.display = 'none';
+        elHealthRow = healthRow;
+        const healthDot = document.createElement('span');
+        healthDot.className = 'lco-health-dot';
+        elHealthDot = healthDot;
+        const healthLabel = document.createElement('span');
+        healthLabel.className = 'lco-health-label';
+        elHealthLabel = healthLabel;
+        healthRow.appendChild(healthDot);
+        healthRow.appendChild(healthLabel);
+        body.appendChild(healthRow);
+
+        // Context window bar (now below health indicator)
         const ctxRow = document.createElement('div');
         ctxRow.className = 'lco-bar-row';
         ctxRow.style.display = 'none';
@@ -110,6 +129,13 @@ export function createOverlay(): OverlayHandle {
         ctxRow.appendChild(ctxTrack);
         ctxRow.appendChild(ctxLabel);
         body.appendChild(ctxRow);
+
+        // Coaching text (below context bar, from health score)
+        const coaching = document.createElement('div');
+        coaching.className = 'lco-coaching';
+        coaching.style.display = 'none';
+        elCoaching = coaching;
+        body.appendChild(coaching);
 
         // Message limit bar
         const limitRow = document.createElement('div');
@@ -204,14 +230,40 @@ export function createOverlay(): OverlayHandle {
                 `~${fmt(inputTokens)} in · ~${fmt(outputTokens)} out · ${fmtCost(cost)}`;
         }
 
+        // Health indicator: show the three-state label with colored dot.
+        if (elHealthRow && elHealthDot && elHealthLabel) {
+            const hasHealth = state.health !== null;
+            elHealthRow.style.display = hasHealth ? '' : 'none';
+            if (hasHealth) {
+                const { level, label } = state.health!;
+                elHealthDot.className = `lco-health-dot lco-health-dot--${level}`;
+                elHealthLabel.textContent = label;
+                elHealthLabel.className = `lco-health-label lco-health-label--${level}`;
+            }
+        }
+
+        // Context bar: still shows the raw percentage for users who want detail.
         if (elContextRow && elContextFill && elContextLabel) {
             const visible = state.contextPct !== null && state.contextPct > 0.1;
             elContextRow.style.display = visible ? '' : 'none';
             if (visible) {
                 const pct = Math.min(state.contextPct!, 100);
                 elContextFill.style.width = `${pct}%`;
-                elContextLabel.textContent = `${pct.toFixed(1)}% ctx`;
+                elContextLabel.textContent = `${pct.toFixed(0)}%`;
+                // Color the bar based on health level.
+                const level = state.health?.level ?? 'healthy';
+                elContextFill.className = `lco-bar-fill lco-bar-fill--${level}`;
                 elContextFill.classList.toggle('lco-streaming', state.streaming);
+            }
+        }
+
+        // Coaching text from the health score.
+        if (elCoaching) {
+            if (state.health && state.health.level !== 'healthy') {
+                elCoaching.textContent = state.health.coaching;
+                elCoaching.style.display = '';
+            } else {
+                elCoaching.style.display = 'none';
             }
         }
 
