@@ -324,7 +324,7 @@ export default defineBackground({
 
     // Periodic alarms (setInterval is unreliable in service workers; chrome.alarms persists)
     browser.alarms.create('cleanOrphanedTabs', { periodInMinutes: 5 });
-    browser.alarms.create('computeDailySummary', { periodInMinutes: 30 });
+    browser.alarms.create('computeDailySummary', { delayInMinutes: 0.1, periodInMinutes: 30 });
     browser.alarms.create('computeWeeklySummary', { periodInMinutes: 360 });
     browser.alarms.create('pruneOldData', { periodInMinutes: 1440 });
 

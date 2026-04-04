@@ -8,7 +8,7 @@ export default defineConfig({
     // First run requires establishing Developer mode in chrome://extensions.
   },
   manifest: {
-    name: 'Local Context Optimizer',
+    name: 'Saar',
     // 132-char limit for CWS short description.
     description: 'See token count, cost, and context usage live on claude.ai. All counting happens locally — no data ever leaves your browser.',
     homepage_url: 'https://lco.opencodeintel.com',
