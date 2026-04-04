@@ -260,7 +260,9 @@ body {
     border: 1px solid var(--lco-border);
     border-radius: var(--lco-radius);
     padding: 12px;
-    transition: opacity 150ms ease;
+    /* GPU-accelerated: only transform + opacity for 60/120fps compositing. */
+    will-change: transform, opacity;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
 }
 
 .lco-dash-active--empty {
@@ -269,10 +271,12 @@ body {
 
 .lco-dash-active--hidden {
     opacity: 0;
+    transform: translateY(6px) scale(0.97);
 }
 
 .lco-dash-active--visible {
     opacity: 1;
+    transform: translateY(0) scale(1);
 }
 
 .lco-dash-placeholder {

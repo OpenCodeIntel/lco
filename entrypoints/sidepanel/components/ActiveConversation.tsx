@@ -16,14 +16,17 @@ export default function ActiveConversation({ conv, health }: Props) {
     const [visible, setVisible] = useState(false);
     const prevConvId = useRef<string | null>(null);
 
-    // Fade transition when conversation changes.
+    // Graceful swap: fade + scale out the old card, then pop in the new one.
+    // The 250ms delay matches the CSS opacity exit duration so the new content
+    // only appears after the old card has fully disappeared. transform + opacity
+    // are GPU-composited; no layout or paint for silky 60/120fps.
     useEffect(() => {
         if (conv?.id !== prevConvId.current) {
             setVisible(false);
             const timer = setTimeout(() => {
                 prevConvId.current = conv?.id ?? null;
                 setVisible(true);
-            }, 150);
+            }, 250);
             return () => clearTimeout(timer);
         }
         setVisible(true);
