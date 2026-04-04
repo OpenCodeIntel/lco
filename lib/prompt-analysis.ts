@@ -1,24 +1,77 @@
 // lib/prompt-analysis.ts
-// Prompt Agent: pure functions that analyze per-turn prompt characteristics
-// and return coaching signals. No DOM, no chrome APIs, no side effects.
+// Prompt Agent: analyzes per-turn prompt characteristics and returns coaching signals.
+// No DOM refs, no chrome APIs, no side effects. Pure functions only.
+//
+// ── Role in the multi-agent architecture ────────────────────────────────────
+//
+// Each lib/ module is an agent with a single responsibility and a clean interface.
+// The content script (claude-ai.content.ts) is the orchestrator that wires agents.
+//
+// | Agent             | Module                   | Input                        | Output           |
+// |-------------------|--------------------------|------------------------------|------------------|
+// | Intelligence Agent| context-intelligence.ts  | ConversationState            | ContextSignal[]  |
+// | Health Agent      | health-score.ts          | contextPct, turnCount, rate  | HealthScore      |
+// | Pricing Agent     | pricing.ts               | model, tokens                | cost (USD)       |
+// | Memory Agent      | conversation-store.ts    | conversationId, turn data    | ConversationRecord|
+// | **Prompt Agent**  | **prompt-analysis.ts**   | **PromptCharacteristics**    | **ContextSignal[]**|
+//
+// The Prompt Agent and the Intelligence Agent share the same output type
+// (ContextSignal[]). The content script merges their outputs before calling
+// pickTopSignal(). This means prompt coaching signals participate in the
+// existing severity-ranked priority system with zero UI changes.
+//
+// ── Agent contract ──────────────────────────────────────────────────────────
+//
+// Input:  PromptCharacteristics (extracted by inject.ts, carried on STREAM_COMPLETE)
+//         + model name (string)
+//         + recentShortFollowUps count (tracked by the content script)
+// Output: ContextSignal[] with types: model_suggestion, large_paste, follow_up_chain
+// All output signals have severity 'info'. Context health signals (warning/critical)
+// always win in pickTopSignal. Prompt coaching only shows when the conversation
+// is healthy. This is by design, not by accident.
+//
+// ── Data flow ───────────────────────────────────────────────────────────────
+//
+// inject.ts (MAIN world) extracts three prompt characteristics from promptText:
+//   promptLength  = promptText.length
+//   hasCodeBlock  = promptText.includes('```')
+//   isShortFollowUp = length > 0 && length < SHORT_FOLLOWUP_MAX_CHARS
+//
+// These ride the STREAM_COMPLETE payload as optional fields. inject.ts cannot
+// import from lib/, so the thresholds are duplicated inline. The constants
+// below are the canonical source of truth; inject.ts mirrors them.
+//
+// The content script receives the payload, builds PromptCharacteristics,
+// and calls analyzePrompt(). No prompt text is persisted or leaves the tab.
+// ────────────────────────────────────────────────────────────────────────────
 
 import type { ContextSignal } from './context-intelligence';
 
-/** Prompt characteristics extracted from inject.ts via the STREAM_COMPLETE payload. */
+// ── Types ───────────────────────────────────────────────────────────────────
+
+/** Prompt characteristics extracted by inject.ts and carried on STREAM_COMPLETE. */
 export interface PromptCharacteristics {
     promptLength: number;
     hasCodeBlock: boolean;
     isShortFollowUp: boolean;
 }
 
+// ── Constants ───────────────────────────────────────────────────────────────
+
 /** Minimum prompt length (chars) to consider a code block "large". */
 export const LARGE_PASTE_MIN_CHARS = 500;
 
-/** Maximum prompt length (chars) to qualify as a short follow-up. */
+/**
+ * Maximum prompt length (chars) to qualify as a short follow-up.
+ * Canonical source of truth. inject.ts duplicates this value inline
+ * because it cannot import from lib/. Keep both in sync.
+ */
 export const SHORT_FOLLOWUP_MAX_CHARS = 50;
 
 /** Number of consecutive short follow-ups required to trigger the chain signal. */
 export const FOLLOWUP_CHAIN_MIN_COUNT = 3;
+
+// ── Model classification ────────────────────────────────────────────────────
 
 /**
  * Model tier map. Keys are model name prefixes.
@@ -43,6 +96,8 @@ export function classifyModelTier(model: string): { tier: string; label: string 
     }
     return null;
 }
+
+// ── Analysis ────────────────────────────────────────────────────────────────
 
 /**
  * Analyze prompt characteristics and recent conversation state to produce

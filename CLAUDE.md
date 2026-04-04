@@ -21,15 +21,36 @@ Extension's isolated world. Generates session token, injects Room 1, validates a
 **Room 3: Service Worker** (`entrypoints/background.ts`)
 Background worker. Runs `js-tiktoken` with `@anthropic-ai/tokenizer` claude.json BPE vocab. Handles COUNT_TOKENS, writes per-tab state to `chrome.storage.session`, calculates cost via `lib/pricing.ts`, manages tab cleanup + orphan alarm.
 
+## Multi-Agent Architecture
+
+Each `lib/` module is an **agent**: a set of pure functions with a single responsibility, a typed input, and a typed output. No DOM refs, no chrome APIs, no side effects. The content script (`claude-ai.content.ts`) is the **orchestrator** that wires agents together, calls them in sequence, and feeds their outputs to the rendering layer.
+
+| Agent | Module | Input | Output |
+|-------|--------|-------|--------|
+| Intelligence Agent | `lib/context-intelligence.ts` | `ConversationState` | `ContextSignal[]` |
+| Prompt Agent | `lib/prompt-analysis.ts` | `PromptCharacteristics` + model + follow-up count | `ContextSignal[]` |
+| Health Agent | `lib/health-score.ts` | contextPct, turnCount, growthRate | `HealthScore` |
+| Pricing Agent | `lib/pricing.ts` | model, inputTokens, outputTokens | cost (USD) or null |
+| Memory Agent | `lib/conversation-store.ts` | conversationId, turn data | `ConversationRecord` |
+| Handoff Agent | `lib/handoff-summary.ts` | `ConversationRecord` + `HealthScore` | continuation prompt (string) |
+
+**Rules for agents:**
+- Pure functions only. If it touches the DOM or chrome.*, it belongs in the orchestrator, not the agent.
+- Agents depend on their own interface (exported types + functions), never on each other's internals.
+- When two agents produce the same output type (e.g., Intelligence + Prompt both produce `ContextSignal[]`), the orchestrator merges their outputs. The agents never call each other.
+- To add a new agent: create `lib/your-agent.ts`, define input/output types, export pure functions. Wire it in the content script. Add tests in `tests/unit/your-agent.test.ts`.
+
+**Signal priority system:** All signals funnel through `pickTopSignal()`, which ranks by severity (critical > warning > info). Agents that produce coaching nudges (Intelligence, Prompt) set severity to match urgency. Context health signals (`warning`/`critical`) always outrank prompt coaching signals (`info`). This is by design: coaching only shows when the conversation is healthy.
+
 ## Separation of Concerns
 
-Each concern gets its own module. When adding a feature, ask: "Which layer does this belong to?" If the answer is two layers, split it.
+Each concern gets its own layer. When adding a feature, ask: "Which layer does this belong to?" If the answer is two layers, split it.
 
-- **Data pipeline** (inject.ts, background.ts): SSE intercept, token counting, storage. Do not add business logic here.
+- **Data pipeline** (inject.ts, background.ts): SSE intercept, token counting, storage. No business logic.
 - **Message bridge** (content script core): Validation and forwarding. Thin relay only.
-- **Overlay rendering** (ui/): DOM creation, styling, animations. No business logic.
-- **Intelligence layer** (lib/): Context analysis, threshold detection, coaching rules. Pure functions, no DOM refs.
-- **Nudge system** (future): User-facing suggestions rendered by the overlay, driven by the intelligence layer.
+- **Agent layer** (lib/): Pure-function agents. Context analysis, prompt coaching, health scoring, pricing, storage. No DOM, no chrome APIs.
+- **Orchestrator** (content script): Wires agents together, tracks per-conversation state, drives the rendering layer.
+- **Rendering layer** (ui/): DOM creation, styling, animations. No business logic. Receives pre-computed state from the orchestrator.
 
 ## Key Technical Decisions
 
@@ -65,10 +86,11 @@ Each concern gets its own module. When adding a feature, ask: "Which layer does 
 - Types live in `lib/message-types.ts`.
 - postMessage target: always `window.location.origin`, never `'*'`.
 - 200ms batching on postMessage and storage writes.
-- inject.ts: no imports, no chrome.* refs, all constants inlined.
+- inject.ts: no imports, no chrome.* refs, all constants inlined. When inject.ts duplicates a constant from lib/, the lib/ module is the canonical source of truth; inject.ts gets a `// mirrors CONSTANT_NAME` comment.
 - Token counting: sync chars/4 during stream, accurate BPE at stream end.
 - Unknown models: return null cost, show `$0.00*` in overlay, never crash.
 - Service worker: all listeners synchronous at top level, async inside handlers.
+- New agents go in `lib/`. Pure functions, typed I/O, no side effects. Wire them in the content script.
 
 ### Workflow
 - Tests: `bun run test`.

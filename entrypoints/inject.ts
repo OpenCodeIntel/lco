@@ -383,10 +383,11 @@ export default defineUnlistedScript(() => {
                     return '';
                 })(promptText);
 
-                // Prompt characteristics for the intelligence layer (inlined; no imports).
+                // Prompt characteristics for the Prompt Agent (inlined; inject.ts cannot import from lib/).
+                // Thresholds here must stay in sync with lib/prompt-analysis.ts constants.
                 const promptLength = promptText.length;
                 const hasCodeBlock = promptText.includes('```');
-                const isShortFollowUp = promptText.length > 0 && promptText.length < 50;
+                const isShortFollowUp = promptText.length > 0 && promptText.length < 50; // mirrors SHORT_FOLLOWUP_MAX_CHARS
 
                 // Send final complete event to the content script bridge
                 postSecureBatch({

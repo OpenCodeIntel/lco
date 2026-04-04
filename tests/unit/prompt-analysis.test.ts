@@ -270,11 +270,8 @@ describe('analyzePrompt: multiple signals', () => {
         expect(signals).toHaveLength(0);
     });
 
-    it('all three signals can fire simultaneously when conditions overlap', () => {
-        // large_paste fires (code + 500+ chars)
-        // follow_up_chain fires (>= 3 short follow-ups)
-        // model_suggestion cannot fire alongside large_paste (code block prevents it)
-        // So max is 2: large_paste + follow_up_chain
+    it('large_paste and follow_up_chain can fire simultaneously', () => {
+        // model_suggestion cannot coexist with large_paste (code block prevents model_suggestion).
         const chars: PromptCharacteristics = { promptLength: 600, hasCodeBlock: true, isShortFollowUp: true };
         const signals = analyzePrompt(chars, 'claude-sonnet-4-6', 4);
         expect(signals.find(x => x.type === 'large_paste')).toBeDefined();
