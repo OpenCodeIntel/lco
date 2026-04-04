@@ -173,6 +173,44 @@ describe('HEALTH_RECOVERED', () => {
     });
 });
 
+// ── STREAM_COMPLETE: new optional fields ──────────────────────────────────────
+
+describe('STREAM_COMPLETE: optional prompt characteristic fields', () => {
+    it('accepts STREAM_COMPLETE with all three new fields present', () => {
+        expect(isValidBridgeSchema(base({
+            type: 'STREAM_COMPLETE',
+            promptLength: 120,
+            hasCodeBlock: false,
+            isShortFollowUp: true,
+        }))).toBe(true);
+    });
+
+    it('accepts STREAM_COMPLETE without any new fields (backward compat)', () => {
+        expect(isValidBridgeSchema(base({ type: 'STREAM_COMPLETE' }))).toBe(true);
+    });
+
+    it('rejects STREAM_COMPLETE with non-number promptLength', () => {
+        expect(isValidBridgeSchema(base({
+            type: 'STREAM_COMPLETE',
+            promptLength: '120',
+        }))).toBe(false);
+    });
+
+    it('rejects STREAM_COMPLETE with non-boolean hasCodeBlock', () => {
+        expect(isValidBridgeSchema(base({
+            type: 'STREAM_COMPLETE',
+            hasCodeBlock: 'true',
+        }))).toBe(false);
+    });
+
+    it('rejects STREAM_COMPLETE with non-boolean isShortFollowUp', () => {
+        expect(isValidBridgeSchema(base({
+            type: 'STREAM_COMPLETE',
+            isShortFollowUp: 0,
+        }))).toBe(false);
+    });
+});
+
 // ── MESSAGE_LIMIT_UPDATE ──────────────────────────────────────────────────────
 
 describe('MESSAGE_LIMIT_UPDATE', () => {

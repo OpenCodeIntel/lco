@@ -87,6 +87,9 @@ export default defineUnlistedScript(() => {
             recoveredAt?: number;
             messageLimitUtilization?: number;
             topicHint?: string;
+            promptLength?: number;
+            hasCodeBlock?: boolean;
+            isShortFollowUp?: boolean;
         }) {
             window.postMessage(
                 {
@@ -380,6 +383,11 @@ export default defineUnlistedScript(() => {
                     return '';
                 })(promptText);
 
+                // Prompt characteristics for the intelligence layer (inlined; no imports).
+                const promptLength = promptText.length;
+                const hasCodeBlock = promptText.includes('```');
+                const isShortFollowUp = promptText.length > 0 && promptText.length < 50;
+
                 // Send final complete event to the content script bridge
                 postSecureBatch({
                     type: 'STREAM_COMPLETE',
@@ -388,6 +396,9 @@ export default defineUnlistedScript(() => {
                     model: summary.model,
                     stopReason: health.stopReason,
                     topicHint,
+                    promptLength,
+                    hasCodeBlock,
+                    isShortFollowUp,
                 });
 
                 console.log(

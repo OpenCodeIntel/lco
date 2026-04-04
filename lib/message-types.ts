@@ -32,6 +32,12 @@ export interface StreamCompletePayload {
     stopReason: string | null;
     /** First meaningful line of the user's prompt, for Conversation DNA. */
     topicHint?: string;
+    /** Character count of the user's prompt text. */
+    promptLength?: number;
+    /** True when the prompt contains fenced code blocks (triple-backtick delimiters). */
+    hasCodeBlock?: boolean;
+    /** True when the prompt is shorter than 50 characters (terse follow-up). */
+    isShortFollowUp?: boolean;
 }
 
 /** Standardized reasons for a health check failure. */

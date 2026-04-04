@@ -408,3 +408,64 @@ describe('pickTopSignal', () => {
         expect(['warning', 'critical']).toContain(top!.severity);
     });
 });
+
+// ── New signal types: signalKey and shouldDismiss ─────────────────────────────
+
+describe('new signal types: signalKey and shouldDismiss', () => {
+    const modelSuggestion: ContextSignal = {
+        type: 'model_suggestion',
+        severity: 'info',
+        message: 'Simple question on Opus. Haiku could handle this at ~5x lower cost.',
+        dismissible: true,
+    };
+    const largePaste: ContextSignal = {
+        type: 'large_paste',
+        severity: 'info',
+        message: 'Large code block detected (~200 tokens). Share only the relevant section.',
+        dismissible: true,
+    };
+    const followUpChain: ContextSignal = {
+        type: 'follow_up_chain',
+        severity: 'info',
+        message: '3 short follow-ups in a row. Combining them into one message reduces context overhead.',
+        dismissible: true,
+    };
+
+    it('signalKey works for model_suggestion', () => {
+        expect(signalKey(modelSuggestion)).toBe('model_suggestion:info');
+    });
+
+    it('signalKey works for large_paste', () => {
+        expect(signalKey(largePaste)).toBe('large_paste:info');
+    });
+
+    it('signalKey works for follow_up_chain', () => {
+        expect(signalKey(followUpChain)).toBe('follow_up_chain:info');
+    });
+
+    it('shouldDismiss works for new signal types', () => {
+        const dismissed = new Set([
+            signalKey(modelSuggestion),
+            signalKey(largePaste),
+        ]);
+        expect(shouldDismiss(modelSuggestion, dismissed)).toBe(true);
+        expect(shouldDismiss(largePaste, dismissed)).toBe(true);
+        expect(shouldDismiss(followUpChain, dismissed)).toBe(false);
+    });
+
+    it('pickTopSignal ranks prompt signals (info) below context warning signals', () => {
+        const contextWarning: ContextSignal = {
+            type: 'growth_warning',
+            severity: 'warning',
+            message: 'Growing fast.',
+            dismissible: true,
+        };
+        const top = pickTopSignal([modelSuggestion, contextWarning, followUpChain]);
+        expect(top).toBe(contextWarning);
+    });
+
+    it('pickTopSignal returns prompt signal when it is the only one', () => {
+        const top = pickTopSignal([modelSuggestion]);
+        expect(top).toBe(modelSuggestion);
+    });
+});

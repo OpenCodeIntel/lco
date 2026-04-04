@@ -23,6 +23,12 @@ export function isValidBridgeSchema(data: any): boolean {
         if (typeof data.inputTokens !== 'number') return false;
         if (typeof data.outputTokens !== 'number') return false;
         if (typeof data.model !== 'string') return false;
+
+        if (data.type === 'STREAM_COMPLETE') {
+            if (data.promptLength !== undefined && typeof data.promptLength !== 'number') return false;
+            if (data.hasCodeBlock !== undefined && typeof data.hasCodeBlock !== 'boolean') return false;
+            if (data.isShortFollowUp !== undefined && typeof data.isShortFollowUp !== 'boolean') return false;
+        }
     }
 
     return true;

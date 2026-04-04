@@ -11,6 +11,8 @@ import { showEnableBanner } from '../ui/enable-banner';
 import { ClaudeAdapter } from '../lib/adapters/claude';
 import { analyzeContext, shouldDismiss, signalKey, pickTopSignal } from '../lib/context-intelligence';
 import type { ConversationState } from '../lib/context-intelligence';
+import { analyzePrompt } from '../lib/prompt-analysis';
+import type { PromptCharacteristics } from '../lib/prompt-analysis';
 import { getContextWindowSize, calculateCost } from '../lib/pricing';
 import { extractConversationId } from '../lib/conversation-store';
 import type { ConversationRecord } from '../lib/conversation-store';
@@ -91,6 +93,10 @@ async function initializeMonitoring(): Promise<void> {
     // Generation counter: incremented on each navigation. Async restore callbacks
     // check this to avoid overwriting state from a newer conversation.
     let navGeneration = 0;
+
+    // Tracks how many consecutive short follow-ups the user has sent.
+    // Resets on SPA navigation alongside other conversation state.
+    let consecutiveShortFollowUps = 0;
 
     // Restore state from stored conversation record if one exists.
     // This gives the overlay correct context % and turn count immediately
@@ -178,8 +184,29 @@ async function initializeMonitoring(): Promise<void> {
             };
             overlay.render(state);
 
-            const active = analyzeContext(convState).filter(s => !shouldDismiss(s, dismissed));
-            const top = pickTopSignal(active);
+            // Track consecutive short follow-ups for the follow_up_chain signal.
+            if (msg.isShortFollowUp) {
+                consecutiveShortFollowUps++;
+            } else {
+                consecutiveShortFollowUps = 0;
+            }
+
+            // Build prompt characteristics and run the Prompt Agent.
+            const promptChars: PromptCharacteristics = {
+                promptLength: msg.promptLength ?? 0,
+                hasCodeBlock: msg.hasCodeBlock ?? false,
+                isShortFollowUp: msg.isShortFollowUp ?? false,
+            };
+            const promptSignals = analyzePrompt(promptChars, msg.model, consecutiveShortFollowUps);
+
+            // Merge context signals (warning/critical) with prompt signals (info).
+            // pickTopSignal ranks by severity, so context health always wins.
+            const contextSignals = analyzeContext(convState).filter(s => !shouldDismiss(s, dismissed));
+            const allSignals = [
+                ...contextSignals,
+                ...promptSignals.filter(s => !shouldDismiss(s, dismissed)),
+            ];
+            const top = pickTopSignal(allSignals);
             if (top) {
                 overlay.showNudge(top, () => { dismissed.add(signalKey(top)); });
             } else {
@@ -345,6 +372,7 @@ async function initializeMonitoring(): Promise<void> {
             cumulativeInput = 0;
             cumulativeOutput = 0;
             cumulativeCost = 0;
+            consecutiveShortFollowUps = 0;
             dismissed = new Set();
             const thisGeneration = ++navGeneration;
             overlay.render(state);
