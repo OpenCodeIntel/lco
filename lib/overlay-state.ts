@@ -4,8 +4,9 @@
 // The content script calls these and passes the result to overlay.render().
 
 import { calculateCost, getContextWindowSize } from './pricing';
-import type { TabState, SessionCost } from './message-types';
+import type { TabState } from './message-types';
 import type { HealthScore } from './health-score';
+import type { ConversationRecord } from './conversation-store';
 
 export interface OverlayState {
     lastRequest: {
@@ -38,18 +39,11 @@ export const INITIAL_STATE: Readonly<OverlayState> = {
     health: null,
 };
 
-function computeContextPct(
-    inputTokens: number,
-    outputTokens: number,
-    model: string,
-    fallback: number | null,
-): number | null {
-    const ctxSize = getContextWindowSize(model);
-    if (ctxSize <= 0) return fallback;
-    return (inputTokens + outputTokens) / ctxSize * 100;
-}
 
-/** Handles TOKEN_BATCH: live update during stream. Clears any prior health warning. */
+/** Handles TOKEN_BATCH: live update during stream. Clears any prior health warning.
+ *  Does NOT update contextPct: inject.ts only captures the user's latest message
+ *  tokens (not the full conversation context), so per-message contextPct is near-zero.
+ *  The content script computes contextPct from cumulative conversation tokens instead. */
 export function applyTokenBatch(
     state: OverlayState,
     payload: { inputTokens: number; outputTokens: number; model: string },
@@ -62,7 +56,6 @@ export function applyTokenBatch(
             model: payload.model,
             cost: calculateCost(payload.inputTokens, payload.outputTokens, payload.model),
         },
-        contextPct: computeContextPct(payload.inputTokens, payload.outputTokens, payload.model, state.contextPct),
         healthBroken: null,
         streaming: true,
     };
@@ -85,11 +78,13 @@ export function applyStreamComplete(
     };
 }
 
-/** Applied after the background returns accurate BPE counts and session totals. */
+/** Applied after the background returns accurate BPE counts.
+ *  Updates lastRequest with precise token counts from the background worker.
+ *  Session and contextPct are managed per-conversation by the content script;
+ *  per-tab data from the background would overwrite restored conversation state. */
 export function applyStorageResponse(
     state: OverlayState,
     tabState: TabState,
-    sessionCost: SessionCost,
 ): OverlayState {
     return {
         ...state,
@@ -99,13 +94,6 @@ export function applyStorageResponse(
             model: tabState.model,
             cost: calculateCost(tabState.inputTokens, tabState.outputTokens, tabState.model),
         },
-        session: {
-            requestCount: sessionCost.requestCount,
-            totalInputTokens: sessionCost.totalInputTokens,
-            totalOutputTokens: sessionCost.totalOutputTokens,
-            totalCost: sessionCost.estimatedCost ?? null,
-        },
-        contextPct: computeContextPct(tabState.inputTokens, tabState.outputTokens, tabState.model, state.contextPct),
         messageLimitUtilization: tabState.messageLimitUtilization ?? state.messageLimitUtilization,
     };
 }
@@ -123,4 +111,34 @@ export function applyHealthRecovered(state: OverlayState): OverlayState {
 /** Handles MESSAGE_LIMIT_UPDATE: store usage cap utilization. */
 export function applyMessageLimit(state: OverlayState, utilization: number): OverlayState {
     return { ...state, messageLimitUtilization: utilization };
+}
+
+/**
+ * Restore overlay state from a previously stored ConversationRecord.
+ * Called on page load and SPA navigation when LCO has existing data.
+ * Computes contextPct from cumulative tokens (totalInputTokens + totalOutputTokens)
+ * rather than record.lastContextPct, which was stored as near-zero before
+ * cumulative tracking was introduced.
+ * Does not touch lastRequest or streaming (driven by live SSE only).
+ */
+export function applyRestoredConversation(
+    state: OverlayState,
+    record: ConversationRecord,
+    health: HealthScore | null,
+): OverlayState {
+    const ctxWindow = getContextWindowSize(record.model) || 200000;
+    const contextPct = ctxWindow > 0
+        ? ((record.totalInputTokens + record.totalOutputTokens) / ctxWindow) * 100
+        : 0;
+    return {
+        ...state,
+        contextPct,
+        session: {
+            requestCount: record.turnCount,
+            totalInputTokens: record.totalInputTokens,
+            totalOutputTokens: record.totalOutputTokens,
+            totalCost: record.estimatedCost,
+        },
+        health,
+    };
 }

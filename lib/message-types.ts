@@ -144,6 +144,17 @@ export interface GetConversationMessage {
     conversationId: string;
 }
 
+/**
+ * Update the active conversation for this tab in session storage.
+ * Sent on SPA navigation so the side panel dashboard refreshes immediately
+ * without waiting for the first RECORD_TURN of the new conversation.
+ * conversationId is null when navigating to /new (no active conversation).
+ */
+export interface SetActiveConvMessage {
+    type: 'SET_ACTIVE_CONV';
+    conversationId: string | null;
+}
+
 /** Union of all valid messages the background script will handle */
 export type BackgroundMessage =
     | CountTokensMessage
@@ -151,7 +162,8 @@ export type BackgroundMessage =
     | StoreMessageLimitMessage
     | RecordTurnMessage
     | FinalizeConversationMessage
-    | GetConversationMessage;
+    | GetConversationMessage
+    | SetActiveConvMessage;
 
 /** Response returned by the background after STORE_TOKEN_BATCH */
 export interface StoreTokenBatchResponse {

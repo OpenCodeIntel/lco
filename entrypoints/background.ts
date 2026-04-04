@@ -281,6 +281,21 @@ export default defineBackground({
         return true;
       }
 
+      // Update active conversation for this tab on SPA navigation.
+      // The side panel dashboard listens for activeConv_ changes to refresh immediately.
+      if (message.type === 'SET_ACTIVE_CONV') {
+        const tabId = sender.tab?.id;
+        if (tabId !== undefined) {
+          const key = `activeConv_${tabId}`;
+          const op = message.conversationId
+            ? browser.storage.session.set({ [key]: message.conversationId })
+            : browser.storage.session.remove([key]);
+          op.catch(() => { /* non-critical */ });
+        }
+        sendResponse({ ok: true });
+        return false;
+      }
+
       // Message limit utilization from the SSE message_limit event
       if (message.type === 'STORE_MESSAGE_LIMIT') {
         const tabId = sender.tab?.id;

@@ -2,17 +2,18 @@
 // Thin orchestrator: validates bridge messages, drives state transitions, renders overlay.
 // All logic lives in imported modules; this file only wires them together.
 
-import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage } from '../lib/message-types';
+import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage, SetActiveConvMessage } from '../lib/message-types';
 import { LCO_NAMESPACE } from '../lib/message-types';
 import { isValidBridgeSchema } from '../lib/bridge-validation';
-import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit } from '../lib/overlay-state';
+import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation } from '../lib/overlay-state';
 import { createOverlay } from '../ui/overlay';
 import { showEnableBanner } from '../ui/enable-banner';
 import { ClaudeAdapter } from '../lib/adapters/claude';
 import { analyzeContext, shouldDismiss, signalKey, pickTopSignal } from '../lib/context-intelligence';
-import type { ConversationState, ContextSignal } from '../lib/context-intelligence';
+import type { ConversationState } from '../lib/context-intelligence';
 import { getContextWindowSize, calculateCost } from '../lib/pricing';
-import { extractConversationId, getConversation } from '../lib/conversation-store';
+import { extractConversationId } from '../lib/conversation-store';
+import type { ConversationRecord } from '../lib/conversation-store';
 import { computeHealthScore, computeGrowthRate } from '../lib/health-score';
 import { buildHandoffSummary } from '../lib/handoff-summary';
 
@@ -34,6 +35,42 @@ function freshConvState(): ConversationState {
     return { turnCount: 0, contextPct: 0, contextHistory: [], model: '', contextWindow: 200000 };
 }
 
+/**
+ * Fetch a stored ConversationRecord for this conversation ID.
+ * Returns null if none exists or LCO has never seen this conversation.
+ */
+async function fetchStoredRecord(conversationId: string): Promise<ConversationRecord | null> {
+    try {
+        const record: ConversationRecord | null = await browser.runtime.sendMessage({
+            type: 'GET_CONVERSATION',
+            conversationId,
+        });
+        return record && record.turnCount > 0 ? record : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Build local conversation state from a stored record.
+ * Uses the contextPct computed by applyRestoredConversation (cumulative tokens)
+ * to backfill contextHistory, since per-turn values stored before cumulative
+ * tracking are near-zero and produce meaningless growth rate data.
+ */
+function buildConvStateFromRecord(record: ConversationRecord, contextPct: number): ConversationState {
+    return {
+        turnCount: record.turnCount,
+        contextPct,
+        // Backfill history with the current cumulative value for all turns.
+        // Stored per-turn values are near-zero (pre-cumulative tracking).
+        // A flat history produces a zero growth rate, which is correct:
+        // we have no real per-turn data to compute growth from.
+        contextHistory: record.turns.map(() => contextPct),
+        model: record.model,
+        contextWindow: getContextWindowSize(record.model) || 200000,
+    };
+}
+
 async function initializeMonitoring(): Promise<void> {
     const sessionToken = crypto.randomUUID();
     const overlay = createOverlay();
@@ -41,6 +78,41 @@ async function initializeMonitoring(): Promise<void> {
     let convState = freshConvState();
     let dismissed = new Set<string>();
     let currentConversationId = extractConversationId(window.location.href);
+
+    // Per-conversation cumulative token tracking.
+    // inject.ts only captures the user's latest message text (not the full
+    // API input context), so per-message tokens are a fraction of the real
+    // context usage. Cumulative totals across all turns approximate the
+    // actual conversation size in the context window.
+    let cumulativeInput = 0;
+    let cumulativeOutput = 0;
+    let cumulativeCost = 0;
+
+    // Generation counter: incremented on each navigation. Async restore callbacks
+    // check this to avoid overwriting state from a newer conversation.
+    let navGeneration = 0;
+
+    // Restore state from stored conversation record if one exists.
+    // This gives the overlay correct context % and turn count immediately
+    // on page load, instead of showing 0% until the user sends a message.
+    if (currentConversationId) {
+        const record = await fetchStoredRecord(currentConversationId);
+        if (record) {
+            cumulativeInput = record.totalInputTokens;
+            cumulativeOutput = record.totalOutputTokens;
+            cumulativeCost = record.estimatedCost ?? 0;
+            // applyRestoredConversation owns the contextPct formula.
+            // buildConvStateFromRecord receives it to avoid duplication.
+            state = applyRestoredConversation(state, record, null);
+            convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+            const health = computeHealthScore({
+                contextPct: convState.contextPct,
+                turnCount: convState.turnCount,
+                growthRate: computeGrowthRate(convState.contextHistory),
+            });
+            state = { ...state, health };
+        }
+    }
 
     // 5-layer message bridge: Main World (inject.js) → Service Worker
     // Registered synchronously before any await so no events are dropped
@@ -69,26 +141,39 @@ async function initializeMonitoring(): Promise<void> {
         }
 
         if (msg.type === 'STREAM_COMPLETE') {
-            state = applyStreamComplete(state, msg);
-            overlay.render(state);
+            // Update cumulative totals for this conversation.
+            cumulativeInput += msg.inputTokens;
+            cumulativeOutput += msg.outputTokens;
+            cumulativeCost += calculateCost(msg.inputTokens, msg.outputTokens, msg.model) ?? 0;
 
-            // Update conversation state and evaluate signals after each complete turn.
+            const ctxWindow = getContextWindowSize(msg.model) || 200000;
+            const cumulativeContextPct = ctxWindow > 0
+                ? ((cumulativeInput + cumulativeOutput) / ctxWindow) * 100
+                : 0;
+
+            // Update conversation state before computing health (health depends on turnCount).
             convState = {
                 turnCount: convState.turnCount + 1,
-                contextPct: state.contextPct ?? 0,
-                contextHistory: [...convState.contextHistory, state.contextPct ?? 0],
+                contextPct: cumulativeContextPct,
+                contextHistory: [...convState.contextHistory, cumulativeContextPct],
                 model: msg.model,
-                contextWindow: getContextWindowSize(msg.model) || 200000,
+                contextWindow: ctxWindow,
             };
 
-            // Compute health score and attach to overlay state.
-            const growthRate = computeGrowthRate(convState.contextHistory);
+            // Compute full next state in one step, render once.
             state = {
-                ...state,
+                ...applyStreamComplete(state, msg),
+                contextPct: cumulativeContextPct,
+                session: {
+                    requestCount: convState.turnCount,
+                    totalInputTokens: cumulativeInput,
+                    totalOutputTokens: cumulativeOutput,
+                    totalCost: cumulativeCost,
+                },
                 health: computeHealthScore({
-                    contextPct: convState.contextPct,
+                    contextPct: cumulativeContextPct,
                     turnCount: convState.turnCount,
-                    growthRate,
+                    growthRate: computeGrowthRate(convState.contextHistory),
                 }),
             };
             overlay.render(state);
@@ -128,8 +213,8 @@ async function initializeMonitoring(): Promise<void> {
                 stopReason: msg.stopReason ?? null,
             } satisfies StoreTokenBatchMessage)
                 .then((response: StoreTokenBatchResponse) => {
-                    if (!response?.ok || !response.tabState || !response.sessionCost) return;
-                    state = applyStorageResponse(state, response.tabState, response.sessionCost);
+                    if (!response?.ok || !response.tabState) return;
+                    state = applyStorageResponse(state, response.tabState);
                     overlay.render(state);
                 })
                 .catch((err) => {
@@ -248,11 +333,43 @@ async function initializeMonitoring(): Promise<void> {
             }
             currentConversationId = newId;
 
+            // Notify background immediately so the side panel dashboard can
+            // refresh without waiting for the first RECORD_TURN of the new conversation.
+            browser.runtime.sendMessage({
+                type: 'SET_ACTIVE_CONV',
+                conversationId: newId ?? null,
+            } satisfies SetActiveConvMessage).catch(() => { /* non-critical */ });
+
             state = { ...INITIAL_STATE };
             convState = freshConvState();
+            cumulativeInput = 0;
+            cumulativeOutput = 0;
+            cumulativeCost = 0;
             dismissed = new Set();
+            const thisGeneration = ++navGeneration;
             overlay.render(state);
             overlay.hideNudge();
+
+            // Restore state from storage for the new conversation (if previously tracked).
+            // The generation guard prevents this callback from overwriting state if the
+            // user navigated again (or started streaming) before the fetch completed.
+            if (newId) {
+                fetchStoredRecord(newId).then(record => {
+                    if (!record || navGeneration !== thisGeneration) return;
+                    cumulativeInput = record.totalInputTokens;
+                    cumulativeOutput = record.totalOutputTokens;
+                    cumulativeCost = record.estimatedCost ?? 0;
+                    state = applyRestoredConversation(state, record, null);
+                    convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+                    const health = computeHealthScore({
+                        contextPct: convState.contextPct,
+                        turnCount: convState.turnCount,
+                        growthRate: computeGrowthRate(convState.contextHistory),
+                    });
+                    state = { ...state, health };
+                    overlay.render(state);
+                });
+            }
         });
     }
 }
