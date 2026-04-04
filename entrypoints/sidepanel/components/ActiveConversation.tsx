@@ -58,7 +58,7 @@ export default function ActiveConversation({ conv, health }: Props) {
                 <div className="lco-dash-context-bar">
                     <div
                         className={`lco-dash-context-fill lco-dash-context-fill--${healthLevel}`}
-                        style={{ width: `${Math.min(contextPct, 100)}%` }}
+                        style={{ transform: `scaleX(${Math.min(contextPct, 100) / 100})` }}
                     />
                 </div>
                 <span className="lco-dash-context-label">{Math.round(contextPct)}% context</span>

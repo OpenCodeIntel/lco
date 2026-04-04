@@ -122,7 +122,7 @@ export function createOverlay(): OverlayHandle {
         ctxTrack.className = 'lco-bar-track';
         const ctxFill = document.createElement('div');
         ctxFill.className = 'lco-bar-fill';
-        ctxFill.style.width = '0%';
+        ctxFill.style.transform = 'scaleX(0)';
         elContextFill = ctxFill;
         ctxTrack.appendChild(ctxFill);
         const ctxLabel = document.createElement('span');
@@ -160,7 +160,7 @@ export function createOverlay(): OverlayHandle {
         limitTrack.className = 'lco-bar-track lco-bar-track--warn';
         const limitFill = document.createElement('div');
         limitFill.className = 'lco-bar-fill lco-bar-fill--warn';
-        limitFill.style.width = '0%';
+        limitFill.style.transform = 'scaleX(0)';
         elLimitFill = limitFill;
         limitTrack.appendChild(limitFill);
         const limitLabel = document.createElement('span');
@@ -262,7 +262,7 @@ export function createOverlay(): OverlayHandle {
             elContextRow.style.display = visible ? '' : 'none';
             if (visible) {
                 const pct = Math.min(state.contextPct!, 100);
-                elContextFill.style.width = `${pct}%`;
+                elContextFill.style.transform = `scaleX(${pct / 100})`;
                 elContextLabel.textContent = `${pct.toFixed(0)}%`;
                 // Color the bar based on health level.
                 const level = state.health?.level ?? 'healthy';
@@ -292,7 +292,7 @@ export function createOverlay(): OverlayHandle {
             elLimitRow.style.display = visible ? '' : 'none';
             if (visible) {
                 const pct = Math.min(state.messageLimitUtilization! * 100, 100);
-                elLimitFill.style.width = `${pct}%`;
+                elLimitFill.style.transform = `scaleX(${pct / 100})`;
                 elLimitLabel.textContent = `${pct.toFixed(0)}% limit`;
             }
         }

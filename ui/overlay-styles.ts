@@ -203,7 +203,8 @@ export const OVERLAY_CSS = `
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  transition: background 0.3s ease, box-shadow 0.3s ease;
+  /* No transition: health state changes are rare (once per conversation).
+     Instant swap avoids a paint-layer transition on the main thread. */
 }
 
 .lco-health-dot--healthy   { background: #4ade80; box-shadow: 0 0 4px rgba(74, 222, 128, 0.4); }
@@ -214,7 +215,7 @@ export const OVERLAY_CSS = `
   font-size: 10px;
   font-weight: 600;
   line-height: 1.4;
-  transition: color 0.3s ease;
+  /* No transition: color is a paint property; health state changes snap instantly. */
 }
 
 .lco-health-label--healthy   { color: #4ade80; }
@@ -283,11 +284,16 @@ export const OVERLAY_CSS = `
 }
 
 .lco-bar-fill {
+  width: 100%;
   height: 100%;
   background: var(--lco-bar-fill);
   border-radius: 99px;
   box-shadow: 0 0 6px var(--lco-bar-glow);
-  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease, box-shadow 0.3s ease;
+  transform-origin: left center;
+  transform: scaleX(0);
+  will-change: transform;
+  /* scaleX is compositor-only: no layout, no paint, native 120fps. */
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .lco-bar-fill--warn {
@@ -378,9 +384,7 @@ export const OVERLAY_CSS = `
   .lco-body                   { transition: none; }
   .lco-bar-fill               { transition: none; }
   .lco-bar-fill.lco-streaming { animation: none; }
-  .lco-health-dot             { transition: none; }
   .lco-health-dot--critical   { animation: none; }
-  .lco-health-label           { transition: none; }
   .lco-start-fresh            { transition: none; }
   .lco-nudge,
   .lco-nudge--exiting         { animation: none; }
