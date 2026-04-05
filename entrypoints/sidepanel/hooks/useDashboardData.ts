@@ -34,15 +34,19 @@ export function useDashboardData(): DashboardData {
 
     // Track the current tab ID so we know which activeConv_ key to watch.
     const tabIdRef = useRef<number | null>(null);
+    // Track the current organization ID for account-scoped queries.
+    const orgIdRef = useRef<string>('');
 
     // ── Data loading ─────────────────────────────────────────────────────────
 
     const loadToday = useCallback(async () => {
         try {
+            const orgId = orgIdRef.current;
+            if (!orgId) return;
             const date = todayDateString();
             // Try the cached summary first; compute on demand if the 30-min alarm
             // has not fired yet today (avoids the "all zeros" cold-start bug).
-            const summary = await getDailySummary(date) ?? await computeDailySummary(date);
+            const summary = await getDailySummary(orgId, date) ?? await computeDailySummary(orgId, date);
             setToday(summary);
         } catch (err) {
             console.error('[Saar] Failed to load daily summary:', err);
@@ -51,7 +55,9 @@ export function useDashboardData(): DashboardData {
 
     const loadConversations = useCallback(async () => {
         try {
-            const list = await listConversations(CONVERSATION_LIMIT);
+            const orgId = orgIdRef.current;
+            if (!orgId) return;
+            const list = await listConversations(orgId, CONVERSATION_LIMIT);
             setConversations(list);
         } catch {
             // Empty state is fine.
@@ -60,18 +66,23 @@ export function useDashboardData(): DashboardData {
 
     const loadActiveConversation = useCallback(async (tabId: number) => {
         try {
-            // Read the active conversation ID for this tab from session storage.
-            const key = `activeConv_${tabId}`;
-            const result = await chrome.storage.session.get(key);
-            const convId = result[key] as string | undefined;
+            // Read the active conversation and org ID for this tab from session storage.
+            const convKey = `activeConv_${tabId}`;
+            const orgKey = `activeOrg_${tabId}`;
+            const result = await chrome.storage.session.get([convKey, orgKey]);
+            const convId = result[convKey] as string | undefined;
+            const orgId = result[orgKey] as string | undefined;
 
-            if (!convId) {
+            // Update the org ID ref so other loaders use the correct account scope.
+            if (orgId) orgIdRef.current = orgId;
+
+            if (!convId || !orgIdRef.current) {
                 setActiveConv(null);
                 setActiveHealth(null);
                 return;
             }
 
-            const conv = await getConversation(convId);
+            const conv = await getConversation(orgIdRef.current, convId);
             setActiveConv(conv);
 
             if (conv) {

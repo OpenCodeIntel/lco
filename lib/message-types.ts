@@ -18,6 +18,8 @@ export interface TokenBatchPayload {
     inputTokens: number;
     outputTokens: number;
     model: string;
+    /** Organization UUID extracted from the API URL. Used for account isolation. */
+    organizationId?: string;
 }
 
 /** Fired once after the SSE stream fully terminates */
@@ -38,6 +40,8 @@ export interface StreamCompletePayload {
     hasCodeBlock?: boolean;
     /** True when the prompt is shorter than 50 characters (terse follow-up). */
     isShortFollowUp?: boolean;
+    /** Organization UUID extracted from the API URL. Used for account isolation. */
+    organizationId?: string;
 }
 
 /** Standardized reasons for a health check failure. */
@@ -128,6 +132,7 @@ export interface StoreMessageLimitMessage {
 /** Record a completed turn for persistent conversation storage */
 export interface RecordTurnMessage {
     type: 'RECORD_TURN';
+    organizationId: string;
     conversationId: string;
     inputTokens: number;
     outputTokens: number;
@@ -141,12 +146,14 @@ export interface RecordTurnMessage {
 /** Mark a conversation as finalized (user navigated away or tab closed) */
 export interface FinalizeConversationMessage {
     type: 'FINALIZE_CONVERSATION';
+    organizationId: string;
     conversationId: string;
 }
 
 /** Fetch a conversation record from chrome.storage.local */
 export interface GetConversationMessage {
     type: 'GET_CONVERSATION';
+    organizationId: string;
     conversationId: string;
 }
 
@@ -158,6 +165,7 @@ export interface GetConversationMessage {
  */
 export interface SetActiveConvMessage {
     type: 'SET_ACTIVE_CONV';
+    organizationId: string | null;
     conversationId: string | null;
 }
 

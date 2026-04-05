@@ -19,6 +19,35 @@ import {
     RETENTION_DAYS,
 } from '../lib/conversation-store';
 
+/**
+ * Collect all known organization IDs from active session storage keys.
+ * Also stores/reads a persistent set of known org IDs in chrome.storage.local
+ * so alarms can process accounts even when no tabs are open.
+ */
+async function getActiveOrgIds(): Promise<string[]> {
+    // Read from session: activeOrg_{tabId} keys.
+    const sessionData = await browser.storage.session.get(null);
+    const orgIds = new Set<string>();
+    for (const [key, value] of Object.entries(sessionData)) {
+        if (key.startsWith('activeOrg_') && typeof value === 'string' && value.length > 0) {
+            orgIds.add(value);
+        }
+    }
+
+    // Read persistent known orgs as fallback (alarms fire when no tabs are open).
+    const localData = await browser.storage.local.get('knownOrgIds');
+    const known = Array.isArray(localData.knownOrgIds) ? localData.knownOrgIds as string[] : [];
+    for (const id of known) orgIds.add(id);
+
+    // Persist the union back so future alarm fires see all accounts.
+    const allIds = [...orgIds];
+    if (allIds.length > 0) {
+        await browser.storage.local.set({ knownOrgIds: allIds });
+    }
+
+    return allIds;
+}
+
 let _tokenizer: Tiktoken | null = null;
 let _initPromise: Promise<Tiktoken> | null = null;
 
@@ -138,16 +167,19 @@ async function writeMessageLimit(
 async function cleanTabStorage(tabId: number): Promise<void> {
   // Finalize any active conversation for this tab before cleaning up.
   const activeConvKey = `activeConv_${tabId}`;
-  const data = await browser.storage.session.get([activeConvKey]);
+  const activeOrgKey = `activeOrg_${tabId}`;
+  const data = await browser.storage.session.get([activeConvKey, activeOrgKey]);
   const convId = data[activeConvKey] as string | undefined;
-  if (convId) {
-    await finalizeConversation(convId).catch(() => { /* non-critical */ });
+  const orgId = data[activeOrgKey] as string | undefined;
+  if (convId && orgId) {
+    await finalizeConversation(orgId, convId).catch(() => { /* non-critical */ });
   }
 
   await browser.storage.session.remove([
     tabStateKey(tabId),
     sessionCostKey(tabId),
     activeConvKey,
+    activeOrgKey,
   ]);
   console.log(`[LCO] Cleaned storage for closed tab: ${tabId}`);
 }
@@ -235,7 +267,7 @@ export default defineBackground({
       // Persist a completed turn to chrome.storage.local for conversation history.
       if (message.type === 'RECORD_TURN') {
         const tabId = sender.tab?.id;
-        recordTurn(message.conversationId, {
+        recordTurn(message.organizationId, message.conversationId, {
           inputTokens: message.inputTokens,
           outputTokens: message.outputTokens,
           model: message.model,
@@ -261,7 +293,7 @@ export default defineBackground({
 
       // Mark a conversation as finalized (user navigated to a different chat or closed the tab).
       if (message.type === 'FINALIZE_CONVERSATION') {
-        finalizeConversation(message.conversationId)
+        finalizeConversation(message.organizationId, message.conversationId)
           .then(() => sendResponse({ ok: true }))
           .catch((err) => {
             console.error('[LCO-ERROR] Failed to finalize conversation:', err);
@@ -272,7 +304,7 @@ export default defineBackground({
 
       // Fetch a conversation record for the "Start fresh" flow.
       if (message.type === 'GET_CONVERSATION') {
-        getConversation(message.conversationId)
+        getConversation(message.organizationId, message.conversationId)
           .then((conv) => sendResponse(conv))
           .catch((err) => {
             console.error('[LCO-ERROR] Failed to get conversation:', err);
@@ -286,11 +318,15 @@ export default defineBackground({
       if (message.type === 'SET_ACTIVE_CONV') {
         const tabId = sender.tab?.id;
         if (tabId !== undefined) {
-          const key = `activeConv_${tabId}`;
-          const op = message.conversationId
-            ? browser.storage.session.set({ [key]: message.conversationId })
-            : browser.storage.session.remove([key]);
-          op.catch(() => { /* non-critical */ });
+          const convKey = `activeConv_${tabId}`;
+          const orgKey = `activeOrg_${tabId}`;
+          if (message.conversationId) {
+            const setData: Record<string, string> = { [convKey]: message.conversationId };
+            if (message.organizationId) setData[orgKey] = message.organizationId;
+            browser.storage.session.set(setData).catch(() => {});
+          } else {
+            browser.storage.session.remove([convKey, orgKey]).catch(() => {});
+          }
         }
         sendResponse({ ok: true });
         return false;
@@ -336,21 +372,33 @@ export default defineBackground({
         return;
       }
       if (alarm.name === 'computeDailySummary') {
-        computeDailySummary(todayDateString()).catch((err) => {
-          console.error('[LCO-ERROR] Daily summary computation failed:', err);
+        getActiveOrgIds().then(orgIds => {
+          for (const orgId of orgIds) {
+            computeDailySummary(orgId, todayDateString()).catch((err) => {
+              console.error('[LCO-ERROR] Daily summary computation failed:', err);
+            });
+          }
         });
         return;
       }
       if (alarm.name === 'computeWeeklySummary') {
-        computeWeeklySummary(isoWeekId(Date.now())).catch((err) => {
-          console.error('[LCO-ERROR] Weekly summary computation failed:', err);
+        getActiveOrgIds().then(orgIds => {
+          for (const orgId of orgIds) {
+            computeWeeklySummary(orgId, isoWeekId(Date.now())).catch((err) => {
+              console.error('[LCO-ERROR] Weekly summary computation failed:', err);
+            });
+          }
         });
         return;
       }
       if (alarm.name === 'pruneOldData') {
         const cutoff = Date.now() - RETENTION_DAYS * 86400000;
-        pruneConversations(cutoff).catch((err) => {
-          console.error('[LCO-ERROR] Data pruning failed:', err);
+        getActiveOrgIds().then(orgIds => {
+          for (const orgId of orgIds) {
+            pruneConversations(orgId, cutoff).catch((err) => {
+              console.error('[LCO-ERROR] Data pruning failed:', err);
+            });
+          }
         });
         return;
       }

@@ -58,6 +58,13 @@ export default defineUnlistedScript(() => {
             return dotPath.split('.').reduce((o: any, k: string) => o?.[k], obj);
         }
 
+        // Organization ID extraction (inlined; inject.ts cannot import from lib/).
+        // Mirrors extractOrganizationId in lib/conversation-store.ts.
+        function extractOrgId(url: string): string | null {
+            const m = url.match(/\/organizations\/([0-9a-f-]+)\//i);
+            return m ? m[1].toLowerCase() : null;
+        }
+
         // Endpoint Detection
         function isCompletionEndpoint(url: string): boolean {
             // Use indexOf rather than endsWith so query-string variants still match.
@@ -90,6 +97,7 @@ export default defineUnlistedScript(() => {
             promptLength?: number;
             hasCodeBlock?: boolean;
             isShortFollowUp?: boolean;
+            organizationId?: string;
         }) {
             window.postMessage(
                 {
@@ -200,6 +208,7 @@ export default defineUnlistedScript(() => {
             stream: ReadableStream<Uint8Array>,
             requestModel: string,
             promptText: string,
+            orgId: string | null,
         ) {
             const reader = stream.getReader();
             const decoder = new TextDecoder('utf-8');
@@ -239,6 +248,7 @@ export default defineUnlistedScript(() => {
                         inputTokens: summary.inputTokens,
                         outputTokens: summary.outputTokens,
                         model: summary.model,
+                        ...(orgId ? { organizationId: orgId } : {}),
                     });
                 }, 200);
             }
@@ -400,6 +410,7 @@ export default defineUnlistedScript(() => {
                     promptLength,
                     hasCodeBlock,
                     isShortFollowUp,
+                    ...(orgId ? { organizationId: orgId } : {}),
                 });
 
                 console.log(
@@ -485,6 +496,7 @@ export default defineUnlistedScript(() => {
 
             if (isCompletionEndpoint(url)) {
                 const { model, prompt } = extractModelAndPromptFromInit(init);
+                const organizationId = extractOrgId(url);
                 console.log(`[LCO] Intercepted completion request: ${url.slice(-80)} | model: ${model}`);
 
                 const response = await nativeFetch.call(this, input, init);
@@ -497,7 +509,7 @@ export default defineUnlistedScript(() => {
                         headers: response.headers,
                     });
 
-                    decodeSSEStream(monitorStream, model, prompt).catch((err) => {
+                    decodeSSEStream(monitorStream, model, prompt, organizationId).catch((err) => {
                         console.error('[LCO-ERROR] SSE decoder failed:', err);
                     });
 
