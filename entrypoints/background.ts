@@ -351,6 +351,16 @@ export default defineBackground({
       }
     });
 
+    // Detect when a tab navigates away from claude.ai (logout, redirect).
+    // Clear the active conversation and org so the side panel resets.
+    browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+      if (changeInfo.url && !changeInfo.url.includes('claude.ai')) {
+        const convKey = `activeConv_${tabId}`;
+        const orgKey = `activeOrg_${tabId}`;
+        browser.storage.session.remove([convKey, orgKey]).catch(() => {});
+      }
+    });
+
     // Tab cleanup: remove storage keys when a tab is closed
     browser.tabs.onRemoved.addListener((tabId) => {
       cleanTabStorage(tabId).catch((err) => {

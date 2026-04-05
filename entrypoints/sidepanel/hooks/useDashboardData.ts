@@ -67,18 +67,31 @@ export function useDashboardData(): DashboardData {
     const loadActiveConversation = useCallback(async (tabId: number) => {
         try {
             // Read the active conversation and org ID for this tab from session storage.
-            const convKey = `activeConv_${tabId}`;
-            const orgKey = `activeOrg_${tabId}`;
-            const result = await chrome.storage.session.get([convKey, orgKey]);
-            const convId = result[convKey] as string | undefined;
-            const orgId = result[orgKey] as string | undefined;
+            const cKey = `activeConv_${tabId}`;
+            const oKey = `activeOrg_${tabId}`;
+            const result = await chrome.storage.session.get([cKey, oKey]);
+            const convId = result[cKey] as string | undefined;
+            const orgId = result[oKey] as string | undefined;
 
-            // Update the org ID ref so other loaders use the correct account scope.
-            if (orgId) orgIdRef.current = orgId;
+            // Detect account switch or logout: org ID changed or was cleared.
+            const prevOrg = orgIdRef.current;
+            if (orgId) {
+                orgIdRef.current = orgId;
+            }
+
+            // Account changed (switched accounts or logged out and back in).
+            // Re-fetch history and today for the new account scope.
+            const orgChanged = prevOrg !== '' && orgId !== undefined && orgId !== prevOrg;
 
             if (!convId || !orgIdRef.current) {
                 setActiveConv(null);
                 setActiveHealth(null);
+                // Org cleared (logout): reset dashboard to empty state.
+                if (!orgId && prevOrg) {
+                    orgIdRef.current = '';
+                    setToday(null);
+                    setConversations([]);
+                }
                 return;
             }
 
@@ -96,11 +109,17 @@ export function useDashboardData(): DashboardData {
             } else {
                 setActiveHealth(null);
             }
+
+            // Account switched: reload history and today for the new org.
+            if (orgChanged) {
+                loadConversations();
+                loadToday();
+            }
         } catch {
             setActiveConv(null);
             setActiveHealth(null);
         }
-    }, []);
+    }, [loadConversations, loadToday]);
 
     // ── Initial load ─────────────────────────────────────────────────────────
 
@@ -149,9 +168,9 @@ export function useDashboardData(): DashboardData {
             }
 
             if (area === 'session') {
-                // Active conversation for a tab changed (SPA navigation to new chat).
-                const hasActiveConvChange = keys.some(k => k.startsWith('activeConv_'));
-                if (hasActiveConvChange && tabIdRef.current !== null) {
+                // Active conversation or org for a tab changed (navigation, logout, account switch).
+                const hasActiveChange = keys.some(k => k.startsWith('activeConv_') || k.startsWith('activeOrg_'));
+                if (hasActiveChange && tabIdRef.current !== null) {
                     loadActiveConversation(tabIdRef.current);
                 }
             }
