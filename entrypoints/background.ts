@@ -173,6 +173,8 @@ async function cleanTabStorage(tabId: number): Promise<void> {
   const orgId = data[activeOrgKey] as string | undefined;
   if (convId && orgId) {
     await finalizeConversation(orgId, convId).catch(() => { /* non-critical */ });
+  } else if (convId && !orgId) {
+    console.warn(`[LCO] Tab ${tabId} had an active conversation but no org ID; cannot finalize`);
   }
 
   await browser.storage.session.remove([
@@ -193,7 +195,7 @@ async function cleanOrphanedTabs(): Promise<void> {
 
   const activeIds = new Set(allTabs.map((t) => String(t.id)));
   const orphanKeys = Object.keys(allData).filter((key) => {
-    const match = key.match(/^(?:tabState|sessionCost|activeConv)_(\d+)$/);
+    const match = key.match(/^(?:tabState|sessionCost|activeConv|activeOrg)_(\d+)$/);
     return match && !activeIds.has(match[1]);
   });
 
@@ -267,6 +269,11 @@ export default defineBackground({
       // Persist a completed turn to chrome.storage.local for conversation history.
       if (message.type === 'RECORD_TURN') {
         const tabId = sender.tab?.id;
+        if (!message.organizationId) {
+          console.warn('[LCO] RECORD_TURN received without organizationId — ignoring');
+          sendResponse({ ok: false });
+          return true;
+        }
         recordTurn(message.organizationId, message.conversationId, {
           inputTokens: message.inputTokens,
           outputTokens: message.outputTokens,
@@ -276,10 +283,11 @@ export default defineBackground({
           completedAt: Date.now(),
         }, message.topicHint)
           .then(() => {
-            // Track the active conversation for this tab so tab-close can finalize it.
+            // Track the active conversation and org for this tab so tab-close can finalize it.
             if (tabId !== undefined) {
               browser.storage.session.set({
                 [`activeConv_${tabId}`]: message.conversationId,
+                [`activeOrg_${tabId}`]: message.organizationId,
               }).catch(() => { /* non-critical */ });
             }
             sendResponse({ ok: true });
@@ -322,7 +330,12 @@ export default defineBackground({
           const orgKey = `activeOrg_${tabId}`;
           if (message.conversationId) {
             const setData: Record<string, string> = { [convKey]: message.conversationId };
-            if (message.organizationId) setData[orgKey] = message.organizationId;
+            if (message.organizationId) {
+              setData[orgKey] = message.organizationId;
+            } else {
+              // organizationId not provided: remove any stale key from a prior scope.
+              browser.storage.session.remove([orgKey]).catch(() => {});
+            }
             browser.storage.session.set(setData).catch(() => {});
           } else {
             browser.storage.session.remove([convKey, orgKey]).catch(() => {});
@@ -352,12 +365,12 @@ export default defineBackground({
     });
 
     // Detect when a tab navigates away from claude.ai (logout, redirect).
-    // Clear the active conversation and org so the side panel resets.
+    // Full cleanup: finalize active conversation and clear all tab storage.
     browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
       if (changeInfo.url && !changeInfo.url.includes('claude.ai')) {
-        const convKey = `activeConv_${tabId}`;
-        const orgKey = `activeOrg_${tabId}`;
-        browser.storage.session.remove([convKey, orgKey]).catch(() => {});
+        cleanTabStorage(tabId).catch((err) => {
+          console.error(`[LCO-ERROR] Navigation cleanup failed for tab ${tabId}:`, err);
+        });
       }
     });
 
@@ -388,6 +401,8 @@ export default defineBackground({
               console.error('[LCO-ERROR] Daily summary computation failed:', err);
             });
           }
+        }).catch((err) => {
+          console.error('[LCO-ERROR] Failed to get active org IDs for daily summary:', err);
         });
         return;
       }
@@ -398,6 +413,8 @@ export default defineBackground({
               console.error('[LCO-ERROR] Weekly summary computation failed:', err);
             });
           }
+        }).catch((err) => {
+          console.error('[LCO-ERROR] Failed to get active org IDs for weekly summary:', err);
         });
         return;
       }
@@ -409,6 +426,8 @@ export default defineBackground({
               console.error('[LCO-ERROR] Data pruning failed:', err);
             });
           }
+        }).catch((err) => {
+          console.error('[LCO-ERROR] Failed to get active org IDs for data pruning:', err);
         });
         return;
       }

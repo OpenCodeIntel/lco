@@ -292,9 +292,10 @@ export async function getConversation(accountId: string, id: string): Promise<Co
     const oldData = await store().get(oldKey);
     const oldRecord = oldData[oldKey] as ConversationRecord | undefined;
     if (oldRecord) {
-        // Migrate to the new scoped key.
+        // Migrate to the new scoped key and remove the legacy key.
         await store().set({ [key]: oldRecord });
         await addToIndex(convIndexKey(accountId), id);
+        await store().remove(oldKey);
         return oldRecord;
     }
     return null;
@@ -404,21 +405,24 @@ export async function listConversations(
     let idxKey = convIndexKey(accountId);
     let index = await readIndex(idxKey);
 
-    // Legacy migration: if the account-scoped index is empty, check the old
-    // global index and migrate all entries to the new scoped index + keys.
+    // Legacy fallback: if the account-scoped index is empty, read from the old
+    // global index directly. We do NOT bulk-migrate here because legacy data
+    // predates account isolation and we cannot know which account it belongs to.
+    // Per-record migration happens in getConversation when each conversation is
+    // individually accessed, at which point the correct accountId is known.
     if (index.length === 0) {
         const legacyIndex = await readIndex(LEGACY_CONV_INDEX_KEY);
         if (legacyIndex.length > 0) {
-            for (const id of legacyIndex) {
-                const oldKey = legacyConvKey(id);
-                const oldData = await store().get(oldKey);
-                const record = oldData[oldKey] as ConversationRecord | undefined;
-                if (record) {
-                    await store().set({ [convKey(accountId, id)]: record });
-                    await addToIndex(convIndexKey(accountId), id);
-                }
+            const legacySlice = legacyIndex.slice(offset, offset + limit);
+            if (legacySlice.length === 0) return [];
+            const legacyKeys = legacySlice.map(legacyConvKey);
+            const data = await store().get(legacyKeys);
+            const results: ConversationRecord[] = [];
+            for (const id of legacySlice) {
+                const record = data[legacyConvKey(id)] as ConversationRecord | undefined;
+                if (record) results.push(record);
             }
-            index = await readIndex(convIndexKey(accountId));
+            return results;
         }
     }
 

@@ -117,7 +117,9 @@ async function initializeMonitoring(): Promise<void> {
             conversationId: currentConversationId,
         } satisfies SetActiveConvMessage).catch(() => { /* non-critical */ });
 
-        const record = await fetchStoredRecord(currentOrgId, currentConversationId);
+        // Defer the fetch until the org ID is known (populated by ORGANIZATION_DETECTED).
+        // If org ID is still null here, the ORGANIZATION_DETECTED handler will retry.
+        const record = currentOrgId ? await fetchStoredRecord(currentOrgId, currentConversationId) : null;
         if (record) {
             cumulativeInput = record.totalInputTokens;
             cumulativeOutput = record.totalOutputTokens;
@@ -159,6 +161,27 @@ async function initializeMonitoring(): Promise<void> {
                     organizationId: currentOrgId,
                     conversationId: currentConversationId,
                 } satisfies SetActiveConvMessage).catch(() => {});
+
+                // Restore conversation state now that we have the org ID.
+                // The init block skipped this because orgId was null at page load.
+                if (currentConversationId) {
+                    const restoreGen = navGeneration;
+                    fetchStoredRecord(currentOrgId, currentConversationId).then((record) => {
+                        if (!record || navGeneration !== restoreGen) return;
+                        cumulativeInput = record.totalInputTokens;
+                        cumulativeOutput = record.totalOutputTokens;
+                        cumulativeCost = record.estimatedCost ?? 0;
+                        state = applyRestoredConversation(state, record, null);
+                        convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+                        const health = computeHealthScore({
+                            contextPct: convState.contextPct,
+                            turnCount: convState.turnCount,
+                            growthRate: computeGrowthRate(convState.contextHistory),
+                        });
+                        state = { ...state, health };
+                        overlay.render(state);
+                    }).catch(() => { /* non-critical */ });
+                }
             }
             return; // ORGANIZATION_DETECTED is handled; no further processing.
         }

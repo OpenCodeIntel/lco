@@ -152,7 +152,7 @@ export function useDashboardData(): DashboardData {
 
             if (area === 'local') {
                 // A conversation record or daily summary changed.
-                const hasConvChange = keys.some(k => k.startsWith('conv:') || k === 'convIndex');
+                const hasConvChange = keys.some(k => k.startsWith('conv:') || k.startsWith('convIndex'));
                 const hasDailyChange = keys.some(k => k.startsWith('daily:'));
 
                 if (hasConvChange) {
