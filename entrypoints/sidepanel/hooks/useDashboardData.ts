@@ -73,29 +73,28 @@ export function useDashboardData(): DashboardData {
             const convId = result[cKey] as string | undefined;
             const orgId = result[oKey] as string | undefined;
 
-            // Detect account switch or logout: org ID changed or was cleared.
+            // Treat the session-read orgId as the source of truth.
+            // Update the ref immediately (clears to '' on logout) so loadConversations
+            // and loadToday always query the correct account scope.
             const prevOrg = orgIdRef.current;
-            if (orgId) {
-                orgIdRef.current = orgId;
-            }
+            orgIdRef.current = orgId ?? '';
 
-            // Account changed (switched accounts or logged out and back in).
-            // Re-fetch history and today for the new account scope.
-            const orgChanged = prevOrg !== '' && orgId !== undefined && orgId !== prevOrg;
+            // Org changed: includes first-login (prevOrg '' → real org) and account
+            // switch or logout. Any transition should reload history and today.
+            const orgChanged = prevOrg !== (orgId ?? '');
 
-            if (!convId || !orgIdRef.current) {
+            if (!convId || !orgId) {
                 setActiveConv(null);
                 setActiveHealth(null);
                 // Org cleared (logout): reset dashboard to empty state.
                 if (!orgId && prevOrg) {
-                    orgIdRef.current = '';
                     setToday(null);
                     setConversations([]);
                 }
                 return;
             }
 
-            const conv = await getConversation(orgIdRef.current, convId);
+            const conv = await getConversation(orgId, convId);
             setActiveConv(conv);
 
             if (conv) {

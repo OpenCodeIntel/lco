@@ -142,11 +142,35 @@ async function initializeMonitoring(): Promise<void> {
     // during the async injectScript / shadow DOM setup window.
     window.addEventListener('message', (event) => {
         if (event.origin !== window.location.origin) return;
+        if (event.source !== window) return;
         if (!event.data || event.data.namespace !== LCO_NAMESPACE) return;
         if (event.data.token !== sessionToken) return;
         if (!isValidBridgeSchema(event.data)) return;
 
         const msg = event.data as LcoBridgeMessage;
+
+        // Restore conversation state from storage for the given org + conversation.
+        // Called when the org ID is first known (ORGANIZATION_DETECTED) or falls
+        // back to TOKEN_BATCH/STREAM_COMPLETE. The navGeneration guard prevents a
+        // stale async callback from overwriting state after SPA navigation.
+        function scheduleConversationRestore(orgId: string, convId: string): void {
+            const restoreGen = navGeneration;
+            fetchStoredRecord(orgId, convId).then((record) => {
+                if (!record || navGeneration !== restoreGen) return;
+                cumulativeInput = record.totalInputTokens;
+                cumulativeOutput = record.totalOutputTokens;
+                cumulativeCost = record.estimatedCost ?? 0;
+                state = applyRestoredConversation(state, record, null);
+                convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+                const health = computeHealthScore({
+                    contextPct: convState.contextPct,
+                    turnCount: convState.turnCount,
+                    growthRate: computeGrowthRate(convState.contextHistory),
+                });
+                state = { ...state, health };
+                overlay.render(state);
+            }).catch(() => { /* non-critical */ });
+        }
 
         // ORGANIZATION_DETECTED fires on page load from the first API call
         // (before any user message). This gives us the account scope immediately.
@@ -165,22 +189,7 @@ async function initializeMonitoring(): Promise<void> {
                 // Restore conversation state now that we have the org ID.
                 // The init block skipped this because orgId was null at page load.
                 if (currentConversationId) {
-                    const restoreGen = navGeneration;
-                    fetchStoredRecord(currentOrgId, currentConversationId).then((record) => {
-                        if (!record || navGeneration !== restoreGen) return;
-                        cumulativeInput = record.totalInputTokens;
-                        cumulativeOutput = record.totalOutputTokens;
-                        cumulativeCost = record.estimatedCost ?? 0;
-                        state = applyRestoredConversation(state, record, null);
-                        convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
-                        const health = computeHealthScore({
-                            contextPct: convState.contextPct,
-                            turnCount: convState.turnCount,
-                            growthRate: computeGrowthRate(convState.contextHistory),
-                        });
-                        state = { ...state, health };
-                        overlay.render(state);
-                    }).catch(() => { /* non-critical */ });
+                    scheduleConversationRestore(currentOrgId, currentConversationId);
                 }
             }
             return; // ORGANIZATION_DETECTED is handled; no further processing.
@@ -196,6 +205,7 @@ async function initializeMonitoring(): Promise<void> {
                     organizationId: currentOrgId,
                     conversationId: currentConversationId,
                 } satisfies SetActiveConvMessage).catch(() => {});
+                scheduleConversationRestore(currentOrgId, currentConversationId);
             }
         }
 

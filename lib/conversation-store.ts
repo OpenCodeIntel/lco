@@ -107,12 +107,15 @@ export const CRITICAL_CONTEXT_PCT = 80;
 // Storage key builders. All keys are scoped to an accountId (organization UUID)
 // so multiple Claude accounts sharing one browser get isolated data.
 // Legacy keys (without accountId) are checked as a read-through migration fallback.
-function convKey(accountId: string, convId: string): string { return `conv:${accountId}:${convId}`; }
-function convIndexKey(accountId: string): string { return `convIndex:${accountId}`; }
-function dailyKey(accountId: string, date: string): string { return `daily:${accountId}:${date}`; }
-function dailyIndexKey(accountId: string): string { return `dailyIndex:${accountId}`; }
-function weeklyKey(accountId: string, weekId: string): string { return `weekly:${accountId}:${weekId}`; }
-function weeklyIndexKey(accountId: string): string { return `weeklyIndex:${accountId}`; }
+function assertAccountId(accountId: string): void {
+    if (!accountId) throw new Error('[LCO] accountId required for scoped storage key');
+}
+function convKey(accountId: string, convId: string): string { assertAccountId(accountId); return `conv:${accountId}:${convId}`; }
+function convIndexKey(accountId: string): string { assertAccountId(accountId); return `convIndex:${accountId}`; }
+function dailyKey(accountId: string, date: string): string { assertAccountId(accountId); return `daily:${accountId}:${date}`; }
+function dailyIndexKey(accountId: string): string { assertAccountId(accountId); return `dailyIndex:${accountId}`; }
+function weeklyKey(accountId: string, weekId: string): string { assertAccountId(accountId); return `weekly:${accountId}:${weekId}`; }
+function weeklyIndexKey(accountId: string): string { assertAccountId(accountId); return `weeklyIndex:${accountId}`; }
 
 // Legacy (pre-account-isolation) key builders for read-through migration.
 function legacyConvKey(convId: string): string { return `conv:${convId}`; }
