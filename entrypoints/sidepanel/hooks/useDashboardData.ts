@@ -34,15 +34,19 @@ export function useDashboardData(): DashboardData {
 
     // Track the current tab ID so we know which activeConv_ key to watch.
     const tabIdRef = useRef<number | null>(null);
+    // Track the current organization ID for account-scoped queries.
+    const orgIdRef = useRef<string>('');
 
     // ── Data loading ─────────────────────────────────────────────────────────
 
     const loadToday = useCallback(async () => {
         try {
+            const orgId = orgIdRef.current;
+            if (!orgId) return;
             const date = todayDateString();
             // Try the cached summary first; compute on demand if the 30-min alarm
             // has not fired yet today (avoids the "all zeros" cold-start bug).
-            const summary = await getDailySummary(date) ?? await computeDailySummary(date);
+            const summary = await getDailySummary(orgId, date) ?? await computeDailySummary(orgId, date);
             setToday(summary);
         } catch (err) {
             console.error('[Saar] Failed to load daily summary:', err);
@@ -51,7 +55,9 @@ export function useDashboardData(): DashboardData {
 
     const loadConversations = useCallback(async () => {
         try {
-            const list = await listConversations(CONVERSATION_LIMIT);
+            const orgId = orgIdRef.current;
+            if (!orgId) return;
+            const list = await listConversations(orgId, CONVERSATION_LIMIT);
             setConversations(list);
         } catch {
             // Empty state is fine.
@@ -60,18 +66,35 @@ export function useDashboardData(): DashboardData {
 
     const loadActiveConversation = useCallback(async (tabId: number) => {
         try {
-            // Read the active conversation ID for this tab from session storage.
-            const key = `activeConv_${tabId}`;
-            const result = await chrome.storage.session.get(key);
-            const convId = result[key] as string | undefined;
+            // Read the active conversation and org ID for this tab from session storage.
+            const cKey = `activeConv_${tabId}`;
+            const oKey = `activeOrg_${tabId}`;
+            const result = await chrome.storage.session.get([cKey, oKey]);
+            const convId = result[cKey] as string | undefined;
+            const orgId = result[oKey] as string | undefined;
 
-            if (!convId) {
+            // Treat the session-read orgId as the source of truth.
+            // Update the ref immediately (clears to '' on logout) so loadConversations
+            // and loadToday always query the correct account scope.
+            const prevOrg = orgIdRef.current;
+            orgIdRef.current = orgId ?? '';
+
+            // Org changed: includes first-login (prevOrg '' → real org) and account
+            // switch or logout. Any transition should reload history and today.
+            const orgChanged = prevOrg !== (orgId ?? '');
+
+            if (!convId || !orgId) {
                 setActiveConv(null);
                 setActiveHealth(null);
+                // Org cleared (logout): reset dashboard to empty state.
+                if (!orgId && prevOrg) {
+                    setToday(null);
+                    setConversations([]);
+                }
                 return;
             }
 
-            const conv = await getConversation(convId);
+            const conv = await getConversation(orgId, convId);
             setActiveConv(conv);
 
             if (conv) {
@@ -85,11 +108,17 @@ export function useDashboardData(): DashboardData {
             } else {
                 setActiveHealth(null);
             }
+
+            // Account switched: reload history and today for the new org.
+            if (orgChanged) {
+                loadConversations();
+                loadToday();
+            }
         } catch {
             setActiveConv(null);
             setActiveHealth(null);
         }
-    }, []);
+    }, [loadConversations, loadToday]);
 
     // ── Initial load ─────────────────────────────────────────────────────────
 
@@ -102,7 +131,11 @@ export function useDashboardData(): DashboardData {
                 await loadActiveConversation(tab.id);
             }
 
-            await Promise.all([loadToday(), loadConversations()]);
+            // loadConversations first: it triggers bulk legacy migration if
+            // the account-scoped index is empty. loadToday depends on migrated
+            // conversation records to compute the daily summary correctly.
+            await loadConversations();
+            await loadToday();
             setLoading(false);
         }
 
@@ -118,7 +151,7 @@ export function useDashboardData(): DashboardData {
 
             if (area === 'local') {
                 // A conversation record or daily summary changed.
-                const hasConvChange = keys.some(k => k.startsWith('conv:') || k === 'convIndex');
+                const hasConvChange = keys.some(k => k.startsWith('conv:') || k.startsWith('convIndex'));
                 const hasDailyChange = keys.some(k => k.startsWith('daily:'));
 
                 if (hasConvChange) {
@@ -134,9 +167,9 @@ export function useDashboardData(): DashboardData {
             }
 
             if (area === 'session') {
-                // Active conversation for a tab changed (SPA navigation to new chat).
-                const hasActiveConvChange = keys.some(k => k.startsWith('activeConv_'));
-                if (hasActiveConvChange && tabIdRef.current !== null) {
+                // Active conversation or org for a tab changed (navigation, logout, account switch).
+                const hasActiveChange = keys.some(k => k.startsWith('activeConv_') || k.startsWith('activeOrg_'));
+                if (hasActiveChange && tabIdRef.current !== null) {
                     loadActiveConversation(tabIdRef.current);
                 }
             }

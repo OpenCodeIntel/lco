@@ -41,10 +41,11 @@ function freshConvState(): ConversationState {
  * Fetch a stored ConversationRecord for this conversation ID.
  * Returns null if none exists or LCO has never seen this conversation.
  */
-async function fetchStoredRecord(conversationId: string): Promise<ConversationRecord | null> {
+async function fetchStoredRecord(orgId: string | null, conversationId: string): Promise<ConversationRecord | null> {
     try {
         const record: ConversationRecord | null = await browser.runtime.sendMessage({
             type: 'GET_CONVERSATION',
+            organizationId: orgId ?? '',
             conversationId,
         });
         return record && record.turnCount > 0 ? record : null;
@@ -81,6 +82,10 @@ async function initializeMonitoring(): Promise<void> {
     let dismissed = new Set<string>();
     let currentConversationId = extractConversationId(window.location.href);
 
+    // Organization UUID for account isolation. Populated from the first bridge
+    // message (inject.ts extracts it from the API URL). Null until first request.
+    let currentOrgId: string | null = null;
+
     // Per-conversation cumulative token tracking.
     // inject.ts only captures the user's latest message text (not the full
     // API input context), so per-message tokens are a fraction of the real
@@ -108,10 +113,13 @@ async function initializeMonitoring(): Promise<void> {
         // extension reload or fresh page load.
         browser.runtime.sendMessage({
             type: 'SET_ACTIVE_CONV',
+            organizationId: currentOrgId,
             conversationId: currentConversationId,
         } satisfies SetActiveConvMessage).catch(() => { /* non-critical */ });
 
-        const record = await fetchStoredRecord(currentConversationId);
+        // Defer the fetch until the org ID is known (populated by ORGANIZATION_DETECTED).
+        // If org ID is still null here, the ORGANIZATION_DETECTED handler will retry.
+        const record = currentOrgId ? await fetchStoredRecord(currentOrgId, currentConversationId) : null;
         if (record) {
             cumulativeInput = record.totalInputTokens;
             cumulativeOutput = record.totalOutputTokens;
@@ -134,11 +142,72 @@ async function initializeMonitoring(): Promise<void> {
     // during the async injectScript / shadow DOM setup window.
     window.addEventListener('message', (event) => {
         if (event.origin !== window.location.origin) return;
+        if (event.source !== window) return;
         if (!event.data || event.data.namespace !== LCO_NAMESPACE) return;
         if (event.data.token !== sessionToken) return;
         if (!isValidBridgeSchema(event.data)) return;
 
         const msg = event.data as LcoBridgeMessage;
+
+        // Restore conversation state from storage for the given org + conversation.
+        // Called when the org ID is first known (ORGANIZATION_DETECTED) or falls
+        // back to TOKEN_BATCH/STREAM_COMPLETE. The navGeneration guard prevents a
+        // stale async callback from overwriting state after SPA navigation.
+        function scheduleConversationRestore(orgId: string, convId: string): void {
+            const restoreGen = navGeneration;
+            fetchStoredRecord(orgId, convId).then((record) => {
+                if (!record || navGeneration !== restoreGen) return;
+                cumulativeInput = record.totalInputTokens;
+                cumulativeOutput = record.totalOutputTokens;
+                cumulativeCost = record.estimatedCost ?? 0;
+                state = applyRestoredConversation(state, record, null);
+                convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+                const health = computeHealthScore({
+                    contextPct: convState.contextPct,
+                    turnCount: convState.turnCount,
+                    growthRate: computeGrowthRate(convState.contextHistory),
+                });
+                state = { ...state, health };
+                overlay.render(state);
+            }).catch(() => { /* non-critical */ });
+        }
+
+        // ORGANIZATION_DETECTED fires on page load from the first API call
+        // (before any user message). This gives us the account scope immediately.
+        if (msg.type === 'ORGANIZATION_DETECTED') {
+            const wasNull = currentOrgId === null;
+            currentOrgId = msg.organizationId;
+            if (wasNull) {
+                // Re-send SET_ACTIVE_CONV with the now-known org ID so the
+                // side panel can scope its queries to this account.
+                browser.runtime.sendMessage({
+                    type: 'SET_ACTIVE_CONV',
+                    organizationId: currentOrgId,
+                    conversationId: currentConversationId,
+                } satisfies SetActiveConvMessage).catch(() => {});
+
+                // Restore conversation state now that we have the org ID.
+                // The init block skipped this because orgId was null at page load.
+                if (currentConversationId) {
+                    scheduleConversationRestore(currentOrgId, currentConversationId);
+                }
+            }
+            return; // ORGANIZATION_DETECTED is handled; no further processing.
+        }
+
+        // Also capture org ID from TOKEN_BATCH/STREAM_COMPLETE as a fallback
+        // in case ORGANIZATION_DETECTED was missed (e.g., inject.ts loaded late).
+        if ('organizationId' in msg && typeof msg.organizationId === 'string' && currentOrgId === null) {
+            currentOrgId = msg.organizationId;
+            if (currentConversationId) {
+                browser.runtime.sendMessage({
+                    type: 'SET_ACTIVE_CONV',
+                    organizationId: currentOrgId,
+                    conversationId: currentConversationId,
+                } satisfies SetActiveConvMessage).catch(() => {});
+                scheduleConversationRestore(currentOrgId, currentConversationId);
+            }
+        }
 
         if (msg.type === 'TOKEN_BATCH') {
             browser.runtime.sendMessage({
@@ -225,9 +294,10 @@ async function initializeMonitoring(): Promise<void> {
             // Persist turn to conversation history in chrome.storage.local.
             // topicHint (first meaningful line of user prompt) flows from inject.ts
             // through the bridge for Conversation DNA.
-            if (currentConversationId) {
+            if (currentConversationId && currentOrgId) {
                 browser.runtime.sendMessage({
                     type: 'RECORD_TURN',
+                    organizationId: currentOrgId,
                     conversationId: currentConversationId,
                     inputTokens: msg.inputTokens,
                     outputTokens: msg.outputTokens,
@@ -330,6 +400,7 @@ async function initializeMonitoring(): Promise<void> {
             if (currentConversationId && state.health) {
                 const conv = await browser.runtime.sendMessage({
                     type: 'GET_CONVERSATION',
+                    organizationId: currentOrgId ?? '',
                     conversationId: currentConversationId,
                 });
                 if (conv) {
@@ -359,9 +430,10 @@ async function initializeMonitoring(): Promise<void> {
             const newId = extractConversationId(window.location.href);
 
             // Finalize the old conversation if navigating to a different one.
-            if (currentConversationId && currentConversationId !== newId) {
+            if (currentConversationId && currentConversationId !== newId && currentOrgId) {
                 browser.runtime.sendMessage({
                     type: 'FINALIZE_CONVERSATION',
+                    organizationId: currentOrgId,
                     conversationId: currentConversationId,
                 } satisfies FinalizeConversationMessage).catch((err) => {
                     console.error('[LCO-ERROR] Failed to finalize conversation:', err);
@@ -373,6 +445,7 @@ async function initializeMonitoring(): Promise<void> {
             // refresh without waiting for the first RECORD_TURN of the new conversation.
             browser.runtime.sendMessage({
                 type: 'SET_ACTIVE_CONV',
+                organizationId: currentOrgId,
                 conversationId: newId ?? null,
             } satisfies SetActiveConvMessage).catch(() => { /* non-critical */ });
 
@@ -391,7 +464,7 @@ async function initializeMonitoring(): Promise<void> {
             // The generation guard prevents this callback from overwriting state if the
             // user navigated again (or started streaming) before the fetch completed.
             if (newId) {
-                fetchStoredRecord(newId).then(record => {
+                fetchStoredRecord(currentOrgId, newId).then(record => {
                     if (!record || navGeneration !== thisGeneration) return;
                     cumulativeInput = record.totalInputTokens;
                     cumulativeOutput = record.totalOutputTokens;

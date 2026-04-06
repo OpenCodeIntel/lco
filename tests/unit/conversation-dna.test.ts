@@ -15,6 +15,8 @@ import {
 import { buildHandoffSummary, deduplicateHints } from '../../lib/handoff-summary';
 import type { HealthScore } from '../../lib/health-score';
 
+const TEST_ORG = 'org-test-123';
+
 // ── Storage mock ──────────────────────────────────────────────────────────────
 
 function createStoreMock(): StorageArea & { _raw: Record<string, unknown> } {
@@ -131,53 +133,53 @@ describe('DNA accumulation', () => {
     const CONV_ID = 'dna-test-conv';
 
     it('sets subject and lastContext on first turn', async () => {
-        await recordTurn(CONV_ID, makeTurn(), 'Set up OAuth2 for Express');
-        const conv = await getConversation(CONV_ID);
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn(), 'Set up OAuth2 for Express');
+        const conv = await getConversation(TEST_ORG, CONV_ID);
         expect(conv!.dna.subject).toBe('Set up OAuth2 for Express');
         expect(conv!.dna.lastContext).toBe('Set up OAuth2 for Express');
         expect(conv!.dna.hints).toEqual(['Set up OAuth2 for Express']);
     });
 
     it('updates lastContext but keeps original subject on subsequent turns', async () => {
-        await recordTurn(CONV_ID, makeTurn(), 'Set up OAuth2 for Express');
-        await recordTurn(CONV_ID, makeTurn(), 'Debug the token refresh endpoint');
-        const conv = await getConversation(CONV_ID);
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn(), 'Set up OAuth2 for Express');
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn(), 'Debug the token refresh endpoint');
+        const conv = await getConversation(TEST_ORG, CONV_ID);
         expect(conv!.dna.subject).toBe('Set up OAuth2 for Express');
         expect(conv!.dna.lastContext).toBe('Debug the token refresh endpoint');
     });
 
     it('stores hints newest-first', async () => {
-        await recordTurn(CONV_ID, makeTurn(), 'First topic');
-        await recordTurn(CONV_ID, makeTurn(), 'Second topic');
-        await recordTurn(CONV_ID, makeTurn(), 'Third topic');
-        const conv = await getConversation(CONV_ID);
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn(), 'First topic');
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn(), 'Second topic');
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn(), 'Third topic');
+        const conv = await getConversation(TEST_ORG, CONV_ID);
         expect(conv!.dna.hints[0]).toBe('Third topic');
         expect(conv!.dna.hints[2]).toBe('First topic');
     });
 
     it('caps hints at MAX_DNA_HINTS', async () => {
         for (let i = 0; i < MAX_DNA_HINTS + 5; i++) {
-            await recordTurn(CONV_ID, makeTurn(), `Topic ${i}`);
+            await recordTurn(TEST_ORG, CONV_ID, makeTurn(), `Topic ${i}`);
         }
-        const conv = await getConversation(CONV_ID);
+        const conv = await getConversation(TEST_ORG, CONV_ID);
         expect(conv!.dna.hints).toHaveLength(MAX_DNA_HINTS);
         // Newest should be last recorded
         expect(conv!.dna.hints[0]).toBe(`Topic ${MAX_DNA_HINTS + 4}`);
     });
 
     it('handles turns without topic hints gracefully', async () => {
-        await recordTurn(CONV_ID, makeTurn(), 'Initial question');
-        await recordTurn(CONV_ID, makeTurn()); // no topicHint
-        await recordTurn(CONV_ID, makeTurn(), 'Follow-up question');
-        const conv = await getConversation(CONV_ID);
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn(), 'Initial question');
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn()); // no topicHint
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn(), 'Follow-up question');
+        const conv = await getConversation(TEST_ORG, CONV_ID);
         expect(conv!.dna.hints).toHaveLength(2);
         expect(conv!.dna.lastContext).toBe('Follow-up question');
     });
 
     it('handles conversation with no hints at all', async () => {
-        await recordTurn(CONV_ID, makeTurn()); // no hint
-        await recordTurn(CONV_ID, makeTurn()); // no hint
-        const conv = await getConversation(CONV_ID);
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn()); // no hint
+        await recordTurn(TEST_ORG, CONV_ID, makeTurn()); // no hint
+        const conv = await getConversation(TEST_ORG, CONV_ID);
         expect(conv!.dna.subject).toBe('');
         expect(conv!.dna.hints).toHaveLength(0);
     });
@@ -218,10 +220,10 @@ describe('deduplicateHints', () => {
 
 describe('DNA-powered buildHandoffSummary', () => {
     it('includes topic progression when DNA has hints', async () => {
-        await recordTurn('conv-1', makeTurn(), 'Set up OAuth2 for Express');
-        await recordTurn('conv-1', makeTurn(), 'Design the database schema for sessions');
-        await recordTurn('conv-1', makeTurn(), 'Debug token refresh returning 401');
-        const conv = await getConversation('conv-1');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'Set up OAuth2 for Express');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'Design the database schema for sessions');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'Debug token refresh returning 401');
+        const conv = await getConversation(TEST_ORG, 'conv-1');
 
         const summary = buildHandoffSummary({
             conversation: conv!,
@@ -237,10 +239,10 @@ describe('DNA-powered buildHandoffSummary', () => {
     });
 
     it('shows topics in chronological order (oldest first)', async () => {
-        await recordTurn('conv-1', makeTurn(), 'First topic');
-        await recordTurn('conv-1', makeTurn(), 'Second topic');
-        await recordTurn('conv-1', makeTurn(), 'Third topic');
-        const conv = await getConversation('conv-1');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'First topic');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'Second topic');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'Third topic');
+        const conv = await getConversation(TEST_ORG, 'conv-1');
 
         const summary = buildHandoffSummary({
             conversation: conv!,
@@ -253,8 +255,8 @@ describe('DNA-powered buildHandoffSummary', () => {
     });
 
     it('falls back gracefully when DNA is empty', async () => {
-        await recordTurn('conv-1', makeTurn()); // no hint
-        const conv = await getConversation('conv-1');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn()); // no hint
+        const conv = await getConversation(TEST_ORG, 'conv-1');
 
         const summary = buildHandoffSummary({
             conversation: conv!,
@@ -267,10 +269,10 @@ describe('DNA-powered buildHandoffSummary', () => {
     });
 
     it('works for non-technical conversations', async () => {
-        await recordTurn('conv-1', makeTurn(), 'What are the best strategies for reducing customer churn?');
-        await recordTurn('conv-1', makeTurn(), 'How do I calculate net revenue retention?');
-        await recordTurn('conv-1', makeTurn(), 'Can you draft an email to at-risk customers?');
-        const conv = await getConversation('conv-1');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'What are the best strategies for reducing customer churn?');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'How do I calculate net revenue retention?');
+        await recordTurn(TEST_ORG, 'conv-1', makeTurn(), 'Can you draft an email to at-risk customers?');
+        const conv = await getConversation(TEST_ORG, 'conv-1');
 
         const summary = buildHandoffSummary({
             conversation: conv!,

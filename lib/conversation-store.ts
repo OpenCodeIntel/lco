@@ -104,13 +104,24 @@ export const MAX_TURNS_PER_RECORD = 50;
 export const RETENTION_DAYS = 90;
 export const CRITICAL_CONTEXT_PCT = 80;
 
-// Storage key prefixes and index names.
-const CONV_PREFIX = 'conv:';
-const DAILY_PREFIX = 'daily:';
-const WEEKLY_PREFIX = 'weekly:';
-const CONV_INDEX_KEY = 'convIndex';
-const DAILY_INDEX_KEY = 'dailyIndex';
-const WEEKLY_INDEX_KEY = 'weeklyIndex';
+// Storage key builders. All keys are scoped to an accountId (organization UUID)
+// so multiple Claude accounts sharing one browser get isolated data.
+// Legacy keys (without accountId) are checked as a read-through migration fallback.
+function assertAccountId(accountId: string): void {
+    if (!accountId) throw new Error('[LCO] accountId required for scoped storage key');
+}
+function convKey(accountId: string, convId: string): string { assertAccountId(accountId); return `conv:${accountId}:${convId}`; }
+function convIndexKey(accountId: string): string { assertAccountId(accountId); return `convIndex:${accountId}`; }
+function dailyKey(accountId: string, date: string): string { assertAccountId(accountId); return `daily:${accountId}:${date}`; }
+function dailyIndexKey(accountId: string): string { assertAccountId(accountId); return `dailyIndex:${accountId}`; }
+function weeklyKey(accountId: string, weekId: string): string { assertAccountId(accountId); return `weekly:${accountId}:${weekId}`; }
+function weeklyIndexKey(accountId: string): string { assertAccountId(accountId); return `weeklyIndex:${accountId}`; }
+
+// Legacy (pre-account-isolation) key builders for read-through migration.
+function legacyConvKey(convId: string): string { return `conv:${convId}`; }
+const LEGACY_CONV_INDEX_KEY = 'convIndex';
+function legacyDailyKey(date: string): string { return `daily:${date}`; }
+const LEGACY_DAILY_INDEX_KEY = 'dailyIndex';
 
 // ── Storage abstraction ───────────────────────────────────────────────────────
 
@@ -147,6 +158,14 @@ const CONV_ID_PATTERNS = [
     /\/chat\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
     /\/chat_conversations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
 ];
+
+const ORG_ID_PATTERN = /\/organizations\/([0-9a-f-]+)\//i;
+
+/** Extract the organization UUID from a claude.ai API URL. Returns null if not found. */
+export function extractOrganizationId(url: string): string | null {
+    const match = url.match(ORG_ID_PATTERN);
+    return match ? match[1].toLowerCase() : null;
+}
 
 /** Extract the conversation UUID from a claude.ai URL. Returns null if not found. */
 export function extractConversationId(url: string): string | null {
@@ -260,11 +279,29 @@ async function removeFromIndex(indexKey: string, ids: Set<string>): Promise<void
 
 // ── Conversation CRUD ─────────────────────────────────────────────────────────
 
-/** Get a single conversation by UUID. Returns null if not found. */
-export async function getConversation(id: string): Promise<ConversationRecord | null> {
-    const key = CONV_PREFIX + id;
+/**
+ * Get a single conversation by UUID. Returns null if not found.
+ * Checks the account-scoped key first; falls back to the legacy global key
+ * for pre-migration data (and migrates it on read).
+ */
+export async function getConversation(accountId: string, id: string): Promise<ConversationRecord | null> {
+    const key = convKey(accountId, id);
     const data = await store().get(key);
-    return (data[key] as ConversationRecord | undefined) ?? null;
+    const record = data[key] as ConversationRecord | undefined;
+    if (record) return record;
+
+    // Legacy read-through migration: check the old global key.
+    const oldKey = legacyConvKey(id);
+    const oldData = await store().get(oldKey);
+    const oldRecord = oldData[oldKey] as ConversationRecord | undefined;
+    if (oldRecord) {
+        // Migrate to the new scoped key and remove the legacy key.
+        await store().set({ [key]: oldRecord });
+        await addToIndex(convIndexKey(accountId), id);
+        await store().remove(oldKey);
+        return oldRecord;
+    }
+    return null;
 }
 
 /**
@@ -273,12 +310,13 @@ export async function getConversation(id: string): Promise<ConversationRecord | 
  * The turns array is capped at MAX_TURNS_PER_RECORD; aggregate fields remain accurate.
  */
 export async function recordTurn(
+    accountId: string,
     conversationId: string,
     turn: Omit<TurnRecord, 'turnNumber'>,
     topicHint?: string,
 ): Promise<ConversationRecord> {
-    const key = CONV_PREFIX + conversationId;
-    const existing = await getConversation(conversationId);
+    const key = convKey(accountId, conversationId);
+    const existing = await getConversation(accountId, conversationId);
     const now = turn.completedAt;
 
     if (existing) {
@@ -346,15 +384,15 @@ export async function recordTurn(
     };
 
     await store().set({ [key]: record });
-    await addToIndex(CONV_INDEX_KEY, conversationId);
+    await addToIndex(convIndexKey(accountId), conversationId);
     return record;
 }
 
 /** Mark a conversation as finalized (user navigated away or tab closed). */
-export async function finalizeConversation(id: string): Promise<void> {
-    const record = await getConversation(id);
+export async function finalizeConversation(accountId: string, id: string): Promise<void> {
+    const record = await getConversation(accountId, id);
     if (!record || record.finalized) return;
-    const key = CONV_PREFIX + id;
+    const key = convKey(accountId, id);
     await store().set({ [key]: { ...record, finalized: true } });
 }
 
@@ -363,18 +401,42 @@ export async function finalizeConversation(id: string): Promise<void> {
  * Offset supports pagination for the dashboard.
  */
 export async function listConversations(
+    accountId: string,
     limit: number,
     offset: number = 0,
 ): Promise<ConversationRecord[]> {
-    const index = await readIndex(CONV_INDEX_KEY);
+    let idxKey = convIndexKey(accountId);
+    let index = await readIndex(idxKey);
+
+    // Legacy fallback: if the account-scoped index is empty, read from the old
+    // global index directly. We do NOT bulk-migrate here because legacy data
+    // predates account isolation and we cannot know which account it belongs to.
+    // Per-record migration happens in getConversation when each conversation is
+    // individually accessed, at which point the correct accountId is known.
+    if (index.length === 0) {
+        const legacyIndex = await readIndex(LEGACY_CONV_INDEX_KEY);
+        if (legacyIndex.length > 0) {
+            const legacySlice = legacyIndex.slice(offset, offset + limit);
+            if (legacySlice.length === 0) return [];
+            const legacyKeys = legacySlice.map(legacyConvKey);
+            const data = await store().get(legacyKeys);
+            const results: ConversationRecord[] = [];
+            for (const id of legacySlice) {
+                const record = data[legacyConvKey(id)] as ConversationRecord | undefined;
+                if (record) results.push(record);
+            }
+            return results;
+        }
+    }
+
     const slice = index.slice(offset, offset + limit);
     if (slice.length === 0) return [];
 
-    const keys = slice.map((id) => CONV_PREFIX + id);
+    const keys = slice.map((id) => convKey(accountId, id));
     const data = await store().get(keys);
     const results: ConversationRecord[] = [];
     for (const id of slice) {
-        const record = data[CONV_PREFIX + id] as ConversationRecord | undefined;
+        const record = data[convKey(accountId, id)] as ConversationRecord | undefined;
         if (record) results.push(record);
     }
     return results;
@@ -385,21 +447,21 @@ export async function listConversations(
  * Also cleans up the conversation index.
  * Returns the number of records deleted.
  */
-export async function pruneConversations(beforeTimestamp: number): Promise<number> {
-    const index = await readIndex(CONV_INDEX_KEY);
+export async function pruneConversations(accountId: string, beforeTimestamp: number): Promise<number> {
+    const idxKey = convIndexKey(accountId);
+    const index = await readIndex(idxKey);
     if (index.length === 0) return 0;
 
-    // Batch-read all conversation records.
-    const keys = index.map((id) => CONV_PREFIX + id);
+    const keys = index.map((id) => convKey(accountId, id));
     const data = await store().get(keys);
 
     const toDelete: string[] = [];
     const idsToRemove = new Set<string>();
 
     for (const id of index) {
-        const record = data[CONV_PREFIX + id] as ConversationRecord | undefined;
+        const record = data[convKey(accountId, id)] as ConversationRecord | undefined;
         if (!record || record.lastActiveAt < beforeTimestamp) {
-            toDelete.push(CONV_PREFIX + id);
+            toDelete.push(convKey(accountId, id));
             idsToRemove.add(id);
         }
     }
@@ -407,7 +469,7 @@ export async function pruneConversations(beforeTimestamp: number): Promise<numbe
     if (toDelete.length === 0) return 0;
 
     await store().remove(toDelete);
-    await removeFromIndex(CONV_INDEX_KEY, idsToRemove);
+    await removeFromIndex(idxKey, idsToRemove);
     return toDelete.length;
 }
 
@@ -417,9 +479,10 @@ export async function pruneConversations(beforeTimestamp: number): Promise<numbe
  * Compute (or recompute) the daily summary for a given date.
  * Scans all conversations for turns that fell on that date.
  */
-export async function computeDailySummary(date: string): Promise<DailySummary> {
-    const index = await readIndex(CONV_INDEX_KEY);
-    const keys = index.map((id) => CONV_PREFIX + id);
+export async function computeDailySummary(accountId: string, date: string): Promise<DailySummary> {
+    const idxKey = convIndexKey(accountId);
+    const index = await readIndex(idxKey);
+    const keys = index.map((id) => convKey(accountId, id));
     const data = index.length > 0 ? await store().get(keys) : {};
 
     // Date boundaries in local time.
@@ -436,7 +499,7 @@ export async function computeDailySummary(date: string): Promise<DailySummary> {
     const modelMap = new Map<string, { convs: Set<string>; input: number; output: number; cost: number | null }>();
 
     for (const id of index) {
-        const record = data[CONV_PREFIX + id] as ConversationRecord | undefined;
+        const record = data[convKey(accountId, id)] as ConversationRecord | undefined;
         if (!record) continue;
 
         // Filter turns that completed on this date.
@@ -490,32 +553,32 @@ export async function computeDailySummary(date: string): Promise<DailySummary> {
         _v: 1,
     };
 
-    await store().set({ [DAILY_PREFIX + date]: summary });
-    await addToIndex(DAILY_INDEX_KEY, date);
+    await store().set({ [dailyKey(accountId, date)]: summary });
+    await addToIndex(dailyIndexKey(accountId), date);
     return summary;
 }
 
 /** Get a daily summary by date string. */
-export async function getDailySummary(date: string): Promise<DailySummary | null> {
-    const key = DAILY_PREFIX + date;
+export async function getDailySummary(accountId: string, date: string): Promise<DailySummary | null> {
+    const key = dailyKey(accountId, date);
     const data = await store().get(key);
     return (data[key] as DailySummary | undefined) ?? null;
 }
 
 /** List daily summaries for the last N days. */
-export async function listDailySummaries(days: number): Promise<DailySummary[]> {
+export async function listDailySummaries(accountId: string, days: number): Promise<DailySummary[]> {
     const today = todayDateString();
     const dates: string[] = [];
     for (let i = 0; i < days; i++) {
         dates.push(dateStringForOffset(today, -i));
     }
 
-    const keys = dates.map((d) => DAILY_PREFIX + d);
+    const keys = dates.map((d) => dailyKey(accountId, d));
     const data = await store().get(keys);
 
     const results: DailySummary[] = [];
     for (const d of dates) {
-        const summary = data[DAILY_PREFIX + d] as DailySummary | undefined;
+        const summary = data[dailyKey(accountId, d)] as DailySummary | undefined;
         if (summary) results.push(summary);
     }
     return results;
@@ -524,14 +587,14 @@ export async function listDailySummaries(days: number): Promise<DailySummary[]> 
 // ── Weekly summary ────────────────────────────────────────────────────────────
 
 /** Compute (or recompute) the weekly summary for a given ISO week. */
-export async function computeWeeklySummary(weekId: string): Promise<WeeklySummary> {
+export async function computeWeeklySummary(accountId: string, weekId: string): Promise<WeeklySummary> {
     const monday = weekMondayFromId(weekId);
     const dates: string[] = [];
     for (let i = 0; i < 7; i++) {
         dates.push(dateStringForOffset(monday, i));
     }
 
-    const keys = dates.map((d) => DAILY_PREFIX + d);
+    const keys = dates.map((d) => dailyKey(accountId, d));
     const data = await store().get(keys);
 
     let conversationCount = 0;
@@ -544,7 +607,7 @@ export async function computeWeeklySummary(weekId: string): Promise<WeeklySummar
     const modelMap = new Map<string, { convCount: number; input: number; output: number; cost: number | null }>();
 
     for (let i = 0; i < dates.length; i++) {
-        const summary = data[DAILY_PREFIX + dates[i]] as DailySummary | undefined;
+        const summary = data[dailyKey(accountId, dates[i])] as DailySummary | undefined;
         if (!summary) continue;
 
         conversationCount += summary.conversationCount;
@@ -598,14 +661,14 @@ export async function computeWeeklySummary(weekId: string): Promise<WeeklySummar
         _v: 1,
     };
 
-    await store().set({ [WEEKLY_PREFIX + weekId]: summary });
-    await addToIndex(WEEKLY_INDEX_KEY, weekId);
+    await store().set({ [weeklyKey(accountId, weekId)]: summary });
+    await addToIndex(weeklyIndexKey(accountId), weekId);
     return summary;
 }
 
 /** Get a weekly summary by week ID. */
-export async function getWeeklySummary(weekId: string): Promise<WeeklySummary | null> {
-    const key = WEEKLY_PREFIX + weekId;
+export async function getWeeklySummary(accountId: string, weekId: string): Promise<WeeklySummary | null> {
+    const key = weeklyKey(accountId, weekId);
     const data = await store().get(key);
     return (data[key] as WeeklySummary | undefined) ?? null;
 }

@@ -113,6 +113,42 @@ describe('STREAM_COMPLETE', () => {
     });
 });
 
+// ── organizationId (shared by TOKEN_BATCH and STREAM_COMPLETE) ───────────────
+
+describe('organizationId field', () => {
+    it('accepts TOKEN_BATCH with valid organizationId', () => {
+        expect(isValidBridgeSchema(base({
+            type: 'TOKEN_BATCH',
+            organizationId: 'org-abc-123',
+        }))).toBe(true);
+    });
+
+    it('accepts TOKEN_BATCH without organizationId (backward compat)', () => {
+        expect(isValidBridgeSchema(base({ type: 'TOKEN_BATCH' }))).toBe(true);
+    });
+
+    it('rejects TOKEN_BATCH with non-string organizationId', () => {
+        expect(isValidBridgeSchema(base({
+            type: 'TOKEN_BATCH',
+            organizationId: 42,
+        }))).toBe(false);
+    });
+
+    it('accepts STREAM_COMPLETE with valid organizationId', () => {
+        expect(isValidBridgeSchema(base({
+            type: 'STREAM_COMPLETE',
+            organizationId: 'org-xyz-789',
+        }))).toBe(true);
+    });
+
+    it('rejects STREAM_COMPLETE with non-string organizationId', () => {
+        expect(isValidBridgeSchema(base({
+            type: 'STREAM_COMPLETE',
+            organizationId: true,
+        }))).toBe(false);
+    });
+});
+
 // ── HEALTH_BROKEN ─────────────────────────────────────────────────────────────
 
 describe('HEALTH_BROKEN', () => {

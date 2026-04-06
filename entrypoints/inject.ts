@@ -58,6 +58,13 @@ export default defineUnlistedScript(() => {
             return dotPath.split('.').reduce((o: any, k: string) => o?.[k], obj);
         }
 
+        // Organization ID extraction (inlined; inject.ts cannot import from lib/).
+        // Mirrors extractOrganizationId in lib/conversation-store.ts.
+        function extractOrgId(url: string): string | null {
+            const m = url.match(/\/organizations\/([0-9a-f-]+)\//i);
+            return m ? m[1].toLowerCase() : null;
+        }
+
         // Endpoint Detection
         function isCompletionEndpoint(url: string): boolean {
             // Use indexOf rather than endsWith so query-string variants still match.
@@ -73,11 +80,15 @@ export default defineUnlistedScript(() => {
         // can be fired the next time a stream completes cleanly.
         let _lastStreamFailed = false;
 
+        // Tracks whether we have already posted the ORGANIZATION_DETECTED message.
+        // Fires once per page load on the first fetch to /api/organizations/.
+        let _orgDetected = false;
+
         // Secure Bridge: postMessage with LCO_V1 namespace + session token
         // Messages are batched every 200ms to avoid saturating the bridge.
         // Never uses '*' as targetOrigin; always scoped to the current origin.
         function postSecureBatch(payload: {
-            type: 'TOKEN_BATCH' | 'STREAM_COMPLETE' | 'HEALTH_BROKEN' | 'HEALTH_RECOVERED' | 'MESSAGE_LIMIT_UPDATE';
+            type: 'TOKEN_BATCH' | 'STREAM_COMPLETE' | 'HEALTH_BROKEN' | 'HEALTH_RECOVERED' | 'MESSAGE_LIMIT_UPDATE' | 'ORGANIZATION_DETECTED';
             inputTokens?: number;
             outputTokens?: number;
             model?: string;
@@ -90,6 +101,7 @@ export default defineUnlistedScript(() => {
             promptLength?: number;
             hasCodeBlock?: boolean;
             isShortFollowUp?: boolean;
+            organizationId?: string;
         }) {
             window.postMessage(
                 {
@@ -200,6 +212,7 @@ export default defineUnlistedScript(() => {
             stream: ReadableStream<Uint8Array>,
             requestModel: string,
             promptText: string,
+            orgId: string | null,
         ) {
             const reader = stream.getReader();
             const decoder = new TextDecoder('utf-8');
@@ -239,6 +252,7 @@ export default defineUnlistedScript(() => {
                         inputTokens: summary.inputTokens,
                         outputTokens: summary.outputTokens,
                         model: summary.model,
+                        ...(orgId ? { organizationId: orgId } : {}),
                     });
                 }, 200);
             }
@@ -400,6 +414,7 @@ export default defineUnlistedScript(() => {
                     promptLength,
                     hasCodeBlock,
                     isShortFollowUp,
+                    ...(orgId ? { organizationId: orgId } : {}),
                 });
 
                 console.log(
@@ -483,8 +498,25 @@ export default defineUnlistedScript(() => {
                         ? input.href
                         : (input as Request)?.url ?? '';
 
+            // Detect the org ID from any API call (not just completions).
+            // Claude.ai makes dozens of fetches on page load (conversations list,
+            // settings, etc.) that all go through /api/organizations/{orgId}/.
+            // Posting ORGANIZATION_DETECTED immediately gives the content script
+            // the account scope before the user sends their first message.
+            if (!_orgDetected && url.includes('/api/organizations/')) {
+                const earlyOrgId = extractOrgId(url);
+                if (earlyOrgId) {
+                    _orgDetected = true;
+                    postSecureBatch({
+                        type: 'ORGANIZATION_DETECTED',
+                        organizationId: earlyOrgId,
+                    });
+                }
+            }
+
             if (isCompletionEndpoint(url)) {
                 const { model, prompt } = extractModelAndPromptFromInit(init);
+                const organizationId = extractOrgId(url);
                 console.log(`[LCO] Intercepted completion request: ${url.slice(-80)} | model: ${model}`);
 
                 const response = await nativeFetch.call(this, input, init);
@@ -497,7 +529,7 @@ export default defineUnlistedScript(() => {
                         headers: response.headers,
                     });
 
-                    decodeSSEStream(monitorStream, model, prompt).catch((err) => {
+                    decodeSSEStream(monitorStream, model, prompt, organizationId).catch((err) => {
                         console.error('[LCO-ERROR] SSE decoder failed:', err);
                     });
 

@@ -10,9 +10,11 @@ export function isValidBridgeSchema(data: any): boolean {
     if (typeof data !== 'object' || data === null) return false;
     if (data.namespace !== LCO_NAMESPACE) return false;
     if (typeof data.token !== 'string' || data.token.length === 0) return false;
-    if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'HEALTH_RECOVERED', 'MESSAGE_LIMIT_UPDATE'].includes(data.type)) return false;
+    if (!['TOKEN_BATCH', 'STREAM_COMPLETE', 'HEALTH_BROKEN', 'HEALTH_RECOVERED', 'MESSAGE_LIMIT_UPDATE', 'ORGANIZATION_DETECTED'].includes(data.type)) return false;
 
-    if (data.type === 'MESSAGE_LIMIT_UPDATE') {
+    if (data.type === 'ORGANIZATION_DETECTED') {
+        if (typeof data.organizationId !== 'string' || data.organizationId.length === 0) return false;
+    } else if (data.type === 'MESSAGE_LIMIT_UPDATE') {
         if (typeof data.messageLimitUtilization !== 'number') return false;
     } else if (data.type === 'HEALTH_BROKEN') {
         if (typeof data.message !== 'string') return false;
@@ -23,6 +25,7 @@ export function isValidBridgeSchema(data: any): boolean {
         if (typeof data.inputTokens !== 'number') return false;
         if (typeof data.outputTokens !== 'number') return false;
         if (typeof data.model !== 'string') return false;
+        if (data.organizationId !== undefined && typeof data.organizationId !== 'string') return false;
 
         if (data.type === 'STREAM_COMPLETE') {
             if (data.promptLength !== undefined && typeof data.promptLength !== 'number') return false;
