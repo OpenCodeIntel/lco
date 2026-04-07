@@ -26,8 +26,7 @@ function makeReset(minutesFromNow: number): string {
     return new Date(NOW + minutesFromNow * 60000).toISOString();
 }
 
-function makeLimits(sessionPct: number, weeklyPct: number, sessionMinutes = 60, weeklyMs = 0): UsageLimitsData {
-    // weeklyMs: ms from NOW until weekly reset. Default: already passed (0).
+function makeLimits(sessionPct: number, weeklyPct: number, sessionMinutes = 60): UsageLimitsData {
     const weeklyResetsAt = new Date('2026-04-08T09:00:00.000Z').toISOString();
     return {
         fiveHour: { utilization: sessionPct, resetsAt: makeReset(sessionMinutes) },

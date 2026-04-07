@@ -267,5 +267,3 @@ export interface StoreUsageLimitsMessage {
     sevenDayUtilization: number;
     sevenDayResetsAt: string;
 }
-
-// Extend the BackgroundMessage union (re-exported at the bottom of the file).

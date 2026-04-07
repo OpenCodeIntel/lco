@@ -10,6 +10,7 @@
 
 import React from 'react';
 import type { UsageBudgetResult, BudgetZone } from '../../../lib/message-types';
+import { classifyZone } from '../../../lib/usage-budget';
 
 interface Props {
     budget: UsageBudgetResult | null;
@@ -66,12 +67,15 @@ export default function UsageBudgetCard({ budget }: Props) {
                 <span className="lco-dash-budget-row-pct">{Math.round(safeSessionPct)}%</span>
             </div>
 
-            {/* Weekly bar (zone based on session, not weekly -- weekly is supplemental) */}
+            {/* Weekly bar uses its own zone based on weeklyPct alone.
+                The card header zone (dot + status label) reflects max(sessionPct, weeklyPct)
+                so it captures whichever window is more exhausted.
+                The weekly bar colors itself independently so each bar reads on its own. */}
             <div className="lco-dash-budget-row">
                 <span className="lco-dash-budget-row-label">Weekly</span>
                 <div className="lco-dash-budget-bar">
                     <div
-                        className={`lco-dash-budget-fill lco-dash-budget-fill--${classifyWeeklyZone(weeklyPct)}`}
+                        className={`lco-dash-budget-fill lco-dash-budget-fill--${classifyZone(weeklyPct)}`}
                         style={{ transform: `scaleX(${safeWeeklyPct / 100})` }}
                     />
                 </div>
@@ -95,13 +99,4 @@ function formatSessionReset(minutes: number): string {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
-
-// Weekly gets its own zone classification independent of session.
-// Session drives the card's primary zone; weekly is informational.
-function classifyWeeklyZone(pct: number): BudgetZone {
-    if (pct >= 90) return 'critical';
-    if (pct >= 75) return 'tight';
-    if (pct >= 50) return 'moderate';
-    return 'comfortable';
 }

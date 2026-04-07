@@ -28,8 +28,10 @@ const ZONE_CRITICAL_THRESHOLD = 90;   // percentage
 /**
  * Classify a utilization percentage into a display zone.
  * comfortable: <50% | moderate: 50-74% | tight: 75-89% | critical: >=90%
+ * Exported so UI components can color individual bars (e.g. the weekly bar
+ * in UsageBudgetCard) using the same thresholds as the agent.
  */
-function classifyZone(pct: number): BudgetZone {
+export function classifyZone(pct: number): BudgetZone {
     if (pct >= ZONE_CRITICAL_THRESHOLD) return 'critical';
     if (pct >= ZONE_TIGHT_THRESHOLD)    return 'tight';
     if (pct >= ZONE_MODERATE_THRESHOLD) return 'moderate';
