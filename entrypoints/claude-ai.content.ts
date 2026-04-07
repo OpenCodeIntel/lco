@@ -2,7 +2,7 @@
 // Thin orchestrator: validates bridge messages, drives state transitions, renders overlay.
 // All logic lives in imported modules; this file only wires them together.
 
-import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage, SetActiveConvMessage } from '../lib/message-types';
+import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage, SetActiveConvMessage, StoreUsageLimitsMessage } from '../lib/message-types';
 import { LCO_NAMESPACE } from '../lib/message-types';
 import { isValidBridgeSchema } from '../lib/bridge-validation';
 import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation } from '../lib/overlay-state';
@@ -51,6 +51,44 @@ async function fetchStoredRecord(orgId: string | null, conversationId: string): 
         return record && record.turnCount > 0 ? record : null;
     } catch {
         return null;
+    }
+}
+
+/**
+ * Fetch the Anthropic usage limits for this account and forward to background.
+ * The usage endpoint returns exact session and weekly utilization with reset timestamps.
+ * This is the same data shown on claude.ai/settings/limits.
+ *
+ * Called on ORGANIZATION_DETECTED (page load) and after each STREAM_COMPLETE
+ * so the side panel always shows fresh numbers without requiring the user to
+ * visit the Settings > Usage page.
+ *
+ * Fire-and-forget: failures are non-critical (dashboard just shows previous data).
+ */
+async function fetchAndStoreUsageLimits(orgId: string): Promise<void> {
+    try {
+        const response = await fetch(`/api/organizations/${orgId}/usage`, { credentials: 'same-origin' });
+        if (!response.ok) return;
+        const data = await response.json() as {
+            five_hour?: { utilization?: number; resets_at?: string };
+            seven_day?: { utilization?: number; resets_at?: string };
+        };
+        const fiveHour = data.five_hour;
+        const sevenDay = data.seven_day;
+        if (
+            !fiveHour || typeof fiveHour.utilization !== 'number' || typeof fiveHour.resets_at !== 'string' ||
+            !sevenDay || typeof sevenDay.utilization !== 'number' || typeof sevenDay.resets_at !== 'string'
+        ) return;
+        browser.runtime.sendMessage({
+            type: 'STORE_USAGE_LIMITS',
+            organizationId: orgId,
+            fiveHourUtilization: fiveHour.utilization,
+            fiveHourResetsAt: fiveHour.resets_at,
+            sevenDayUtilization: sevenDay.utilization,
+            sevenDayResetsAt: sevenDay.resets_at,
+        } satisfies StoreUsageLimitsMessage).catch(() => { /* non-critical */ });
+    } catch {
+        // Network errors are silently ignored; the dashboard shows stale data.
     }
 }
 
@@ -191,6 +229,10 @@ async function initializeMonitoring(): Promise<void> {
                 if (currentConversationId) {
                     scheduleConversationRestore(currentOrgId, currentConversationId);
                 }
+
+                // Fetch usage limits now that we have the org ID.
+                // Populates the Usage Budget card in the side panel immediately on load.
+                fetchAndStoreUsageLimits(currentOrgId).catch(() => { /* non-critical */ });
             }
             return; // ORGANIZATION_DETECTED is handled; no further processing.
         }
@@ -308,6 +350,10 @@ async function initializeMonitoring(): Promise<void> {
                 } satisfies RecordTurnMessage).catch((err) => {
                     console.error('[LCO-ERROR] Failed to record conversation turn:', err);
                 });
+
+                // Refresh usage limits after each response so the side panel
+                // shows the updated session percentage without requiring a page reload.
+                fetchAndStoreUsageLimits(currentOrgId).catch(() => { /* non-critical */ });
             }
 
             browser.runtime.sendMessage({

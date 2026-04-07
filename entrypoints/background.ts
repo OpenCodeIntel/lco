@@ -14,10 +14,12 @@ import {
     computeDailySummary,
     computeWeeklySummary,
     pruneConversations,
+    storeUsageLimits,
     todayDateString,
     isoWeekId,
     RETENTION_DAYS,
 } from '../lib/conversation-store';
+import type { UsageLimitsData } from '../lib/message-types';
 
 /**
  * Collect all known organization IDs from active session storage keys.
@@ -343,6 +345,25 @@ export default defineBackground({
         }
         sendResponse({ ok: true });
         return false;
+      }
+
+      // Usage limit data fetched from /api/organizations/{orgId}/usage by the content script.
+      // Stored as usageLimits:{orgId} in chrome.storage.local (single record, overwritten).
+      // Powers the Usage Budget card in the side panel dashboard.
+      if (message.type === 'STORE_USAGE_LIMITS') {
+        const { organizationId, fiveHourUtilization, fiveHourResetsAt, sevenDayUtilization, sevenDayResetsAt } = message;
+        const limits: UsageLimitsData = {
+          fiveHour: { utilization: fiveHourUtilization, resetsAt: fiveHourResetsAt },
+          sevenDay: { utilization: sevenDayUtilization, resetsAt: sevenDayResetsAt },
+          capturedAt: Date.now(),
+        };
+        storeUsageLimits(organizationId, limits)
+          .then(() => sendResponse({ ok: true }))
+          .catch((err) => {
+            console.error('[LCO-ERROR] Failed to store usage limits:', err);
+            sendResponse({ ok: false });
+          });
+        return true;
       }
 
       // Message limit utilization from the SSE message_limit event

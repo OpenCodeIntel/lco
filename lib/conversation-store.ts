@@ -4,6 +4,7 @@
 // All functions accept an optional storage parameter for testability.
 
 import { calculateCost } from './pricing';
+import type { UsageLimitsData } from './message-types';
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
@@ -116,6 +117,8 @@ function dailyKey(accountId: string, date: string): string { assertAccountId(acc
 function dailyIndexKey(accountId: string): string { assertAccountId(accountId); return `dailyIndex:${accountId}`; }
 function weeklyKey(accountId: string, weekId: string): string { assertAccountId(accountId); return `weekly:${accountId}:${weekId}`; }
 function weeklyIndexKey(accountId: string): string { assertAccountId(accountId); return `weeklyIndex:${accountId}`; }
+// Single record per account; overwritten on each fetch (no append, no prune needed).
+function usageLimitsKey(accountId: string): string { assertAccountId(accountId); return `usageLimits:${accountId}`; }
 
 // Legacy (pre-account-isolation) key builders for read-through migration.
 function legacyConvKey(convId: string): string { return `conv:${convId}`; }
@@ -671,4 +674,37 @@ export async function getWeeklySummary(accountId: string, weekId: string): Promi
     const key = weeklyKey(accountId, weekId);
     const data = await store().get(key);
     return (data[key] as WeeklySummary | undefined) ?? null;
+}
+
+// ── Usage limits ──────────────────────────────────────────────────────────────
+// Stores the latest Anthropic usage data per account.
+// Source: /api/organizations/{orgId}/usage (fetched by content script).
+// This is a single record per account, overwritten on each fetch.
+// Unlike conversation records, there is no history or pruning: the latest
+// data is all that matters for the dashboard display.
+
+/**
+ * Persist Anthropic usage limit data for an account.
+ * Overwrites any previous record for this account.
+ * Called by the background script STORE_USAGE_LIMITS handler.
+ *
+ * @param accountId - Organization UUID (scopes the key to one Claude account)
+ * @param limits    - Parsed data from /api/organizations/{orgId}/usage
+ */
+export async function storeUsageLimits(accountId: string, limits: UsageLimitsData): Promise<void> {
+    const key = usageLimitsKey(accountId);
+    await store().set({ [key]: limits });
+}
+
+/**
+ * Read the latest usage limit data for an account.
+ * Returns null if no data has been stored yet (e.g. user has not loaded claude.ai
+ * with the extension active since this feature shipped).
+ *
+ * @param accountId - Organization UUID
+ */
+export async function getUsageLimits(accountId: string): Promise<UsageLimitsData | null> {
+    const key = usageLimitsKey(accountId);
+    const data = await store().get(key);
+    return (data[key] as UsageLimitsData | undefined) ?? null;
 }

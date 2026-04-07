@@ -9,17 +9,21 @@ import {
     computeDailySummary,
     getConversation,
     listConversations,
+    getUsageLimits,
     todayDateString,
     type DailySummary,
     type ConversationRecord,
 } from '../../../lib/conversation-store';
 import { computeHealthScore, computeGrowthRate, type HealthScore } from '../../../lib/health-score';
+import { computeUsageBudget } from '../../../lib/usage-budget';
+import type { UsageBudgetResult } from '../../../lib/message-types';
 
 export interface DashboardData {
     today: DailySummary | null;
     activeConv: ConversationRecord | null;
     activeHealth: HealthScore | null;
     conversations: ConversationRecord[];
+    budget: UsageBudgetResult | null;
     loading: boolean;
 }
 
@@ -30,6 +34,7 @@ export function useDashboardData(): DashboardData {
     const [activeConv, setActiveConv] = useState<ConversationRecord | null>(null);
     const [activeHealth, setActiveHealth] = useState<HealthScore | null>(null);
     const [conversations, setConversations] = useState<ConversationRecord[]>([]);
+    const [budget, setBudget] = useState<UsageBudgetResult | null>(null);
     const [loading, setLoading] = useState(true);
 
     // Track the current tab ID so we know which activeConv_ key to watch.
@@ -120,6 +125,21 @@ export function useDashboardData(): DashboardData {
         }
     }, [loadConversations, loadToday]);
 
+    const loadBudget = useCallback(async () => {
+        try {
+            const orgId = orgIdRef.current;
+            if (!orgId) return;
+            const limits = await getUsageLimits(orgId);
+            if (!limits) {
+                setBudget(null);
+                return;
+            }
+            setBudget(computeUsageBudget(limits, Date.now()));
+        } catch {
+            // Dashboard shows nothing rather than crash.
+        }
+    }, []);
+
     // ── Initial load ─────────────────────────────────────────────────────────
 
     useEffect(() => {
@@ -136,11 +156,12 @@ export function useDashboardData(): DashboardData {
             // conversation records to compute the daily summary correctly.
             await loadConversations();
             await loadToday();
+            await loadBudget();
             setLoading(false);
         }
 
         init();
-    }, [loadToday, loadConversations, loadActiveConversation]);
+    }, [loadToday, loadConversations, loadActiveConversation, loadBudget]);
 
     // ── Live subscriptions ───────────────────────────────────────────────────
 
@@ -153,6 +174,7 @@ export function useDashboardData(): DashboardData {
                 // A conversation record or daily summary changed.
                 const hasConvChange = keys.some(k => k.startsWith('conv:') || k.startsWith('convIndex'));
                 const hasDailyChange = keys.some(k => k.startsWith('daily:'));
+                const hasBudgetChange = keys.some(k => k.startsWith('usageLimits:'));
 
                 if (hasConvChange) {
                     loadConversations();
@@ -163,6 +185,9 @@ export function useDashboardData(): DashboardData {
                 }
                 if (hasDailyChange) {
                     loadToday();
+                }
+                if (hasBudgetChange) {
+                    loadBudget();
                 }
             }
 
@@ -198,7 +223,7 @@ export function useDashboardData(): DashboardData {
             chrome.tabs.onActivated.removeListener(onTabActivated);
             chrome.tabs.onRemoved.removeListener(onTabRemoved);
         };
-    }, [loadToday, loadConversations, loadActiveConversation]);
+    }, [loadToday, loadConversations, loadActiveConversation, loadBudget]);
 
-    return { today, activeConv, activeHealth, conversations, loading };
+    return { today, activeConv, activeHealth, conversations, budget, loading };
 }

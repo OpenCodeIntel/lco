@@ -16,6 +16,7 @@
     --lco-accent-light: rgba(193, 95, 60, 0.10);
     --lco-health-green: #4caf50;
     --lco-health-yellow: #f5a623;
+    --lco-health-orange: #ff9800;
     --lco-health-red: #e53935;
     --lco-context-fill: #c15f3c;
     --lco-context-track: #e5e3df;
@@ -364,6 +365,111 @@ body {
     color: var(--lco-text-secondary);
 }
 
+/* ── Usage Budget card ──────────────────────────────────────────────────────── */
+/* Data from /api/organizations/{orgId}/usage: exact session + weekly percentages. */
+/* Zone colors mirror the health dot system: green → yellow → orange → red.      */
+
+.lco-dash-budget {
+    padding: 2px 0;
+}
+
+.lco-dash-budget--empty {
+    padding: 0;
+}
+
+.lco-dash-budget-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+/* Budget dot: same size and shape as the health dot in ActiveConversation */
+.lco-dash-budget-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.lco-dash-budget-dot--comfortable { background: var(--lco-health-green);  box-shadow: 0 0 4px rgba(76, 175, 80, 0.4); }
+.lco-dash-budget-dot--moderate    { background: var(--lco-health-yellow); box-shadow: 0 0 4px rgba(245, 166, 35, 0.4); }
+.lco-dash-budget-dot--tight       { background: var(--lco-health-orange); box-shadow: 0 0 4px rgba(255, 152, 0, 0.4); }
+.lco-dash-budget-dot--critical    { background: var(--lco-health-red);    box-shadow: 0 0 4px rgba(229, 57, 53, 0.4); }
+
+.lco-dash-budget-zone-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--lco-text-secondary);
+}
+
+/* Primary status line: "11% used; resets in 53 min" */
+.lco-dash-budget-status {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--lco-text);
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+
+/* Session and weekly bar rows */
+.lco-dash-budget-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.lco-dash-budget-row-label {
+    font-size: 11px;
+    color: var(--lco-text-muted);
+    width: 42px;        /* Fixed width so both bars align left-edge perfectly */
+    flex-shrink: 0;
+}
+
+.lco-dash-budget-bar {
+    flex: 1;
+    height: 5px;
+    background: var(--lco-context-track);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+/* GPU-composited fill: scaleX is compositor-only (no layout, no paint, 120fps). */
+.lco-dash-budget-fill {
+    width: 100%;
+    height: 100%;
+    border-radius: 3px;
+    transform-origin: left center;
+    transform: scaleX(0);
+    will-change: transform;
+    transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lco-dash-budget-fill--comfortable { background: var(--lco-health-green);  box-shadow: 0 0 4px rgba(76, 175, 80, 0.3); }
+.lco-dash-budget-fill--moderate    { background: var(--lco-health-yellow); box-shadow: 0 0 4px rgba(245, 166, 35, 0.3); }
+.lco-dash-budget-fill--tight       { background: var(--lco-health-orange); box-shadow: 0 0 4px rgba(255, 152, 0, 0.3); }
+.lco-dash-budget-fill--critical    { background: var(--lco-health-red);    box-shadow: 0 0 4px rgba(229, 57, 53, 0.3); }
+
+.lco-dash-budget-row-pct {
+    font-size: 11px;
+    color: var(--lco-text-muted);
+    font-family: var(--lco-font-mono);
+    width: 28px;        /* Fixed width so the percentage numbers don't shift layout */
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* Reset countdown lines below the bars */
+.lco-dash-budget-resets {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--lco-text-muted);
+}
+
 /* ── Conversation list ──────────────────────────────────────────────────────── */
 
 .lco-dash-convlist {
@@ -470,6 +576,9 @@ body {
         transition: none;
     }
     .lco-dash-context-fill {
+        transition: none;
+    }
+    .lco-dash-budget-fill {
         transition: none;
     }
     .lco-dash-metric {

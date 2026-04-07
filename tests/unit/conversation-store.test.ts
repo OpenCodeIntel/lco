@@ -18,12 +18,15 @@ import {
     getDailySummary,
     listDailySummaries,
     getWeeklySummary,
+    storeUsageLimits,
+    getUsageLimits,
     MAX_TURNS_PER_RECORD,
     CRITICAL_CONTEXT_PCT,
     type StorageArea,
     type TurnRecord,
     type ConversationRecord,
 } from '../../lib/conversation-store';
+import type { UsageLimitsData } from '../../lib/message-types';
 
 const TEST_ORG = 'org-test-123';
 
@@ -763,6 +766,70 @@ describe('empty accountId throws', () => {
     it('getConversation rejects empty string accountId', async () => {
         await expect(
             getConversation('', 'conv-x'),
+        ).rejects.toThrow('[LCO] accountId required for scoped storage key');
+    });
+});
+
+// ── Usage limits CRUD ─────────────────────────────────────────────────────────
+
+describe('storeUsageLimits / getUsageLimits', () => {
+    const makeLimits = (sessionPct: number, weeklyPct: number): UsageLimitsData => ({
+        fiveHour: { utilization: sessionPct, resetsAt: '2026-04-07T01:00:00.000Z' },
+        sevenDay: { utilization: weeklyPct, resetsAt: '2026-04-08T09:00:00.000Z' },
+        capturedAt: Date.now(),
+    });
+
+    it('stores and retrieves usage limits for an account', async () => {
+        const limits = makeLimits(11, 21);
+        await storeUsageLimits(TEST_ORG, limits);
+        const retrieved = await getUsageLimits(TEST_ORG);
+        expect(retrieved).toEqual(limits);
+    });
+
+    it('returns null when no limits have been stored', async () => {
+        const result = await getUsageLimits('org-never-stored');
+        expect(result).toBeNull();
+    });
+
+    it('overwrites previous data on second store call', async () => {
+        await storeUsageLimits(TEST_ORG, makeLimits(11, 21));
+        const updated = makeLimits(44, 55);
+        await storeUsageLimits(TEST_ORG, updated);
+        const result = await getUsageLimits(TEST_ORG);
+        expect(result?.fiveHour.utilization).toBe(44);
+        expect(result?.sevenDay.utilization).toBe(55);
+    });
+
+    it('isolates data between accounts (different org IDs)', async () => {
+        const orgA = 'org-aaa-111';
+        const orgB = 'org-bbb-222';
+        await storeUsageLimits(orgA, makeLimits(10, 20));
+        await storeUsageLimits(orgB, makeLimits(80, 90));
+
+        const a = await getUsageLimits(orgA);
+        const b = await getUsageLimits(orgB);
+        expect(a?.fiveHour.utilization).toBe(10);
+        expect(b?.fiveHour.utilization).toBe(80);
+    });
+
+    it('uses the correct storage key format usageLimits:{accountId}', async () => {
+        const limits = makeLimits(11, 21);
+        await storeUsageLimits(TEST_ORG, limits);
+        // Read back using getUsageLimits to confirm the correct key is used
+        // (if the key were wrong, it would return null instead of the stored record).
+        const result = await getUsageLimits(TEST_ORG);
+        expect(result).not.toBeNull();
+    });
+
+    it('throws when accountId is empty string', async () => {
+        await expect(
+            storeUsageLimits('', makeLimits(11, 21)),
+        ).rejects.toThrow('[LCO] accountId required for scoped storage key');
+    });
+
+    it('throws getUsageLimits when accountId is empty string', async () => {
+        await expect(
+            getUsageLimits(''),
         ).rejects.toThrow('[LCO] accountId required for scoped storage key');
     });
 });

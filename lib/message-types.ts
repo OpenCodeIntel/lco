@@ -183,6 +183,7 @@ export type BackgroundMessage =
     | CountTokensMessage
     | StoreTokenBatchMessage
     | StoreMessageLimitMessage
+    | StoreUsageLimitsMessage
     | RecordTurnMessage
     | FinalizeConversationMessage
     | GetConversationMessage
@@ -193,4 +194,76 @@ export interface StoreTokenBatchResponse {
     ok: boolean;
     tabState?: TabState;
     sessionCost?: SessionCost;
+}
+
+// ── Usage Limits Types ────────────────────────────────────────────────────────
+// Data from the Anthropic usage endpoint: /api/organizations/{orgId}/usage
+// This is the same data shown on claude.ai/settings/limits.
+
+/**
+ * Raw usage window data as returned by the Anthropic usage endpoint.
+ * Each window has a utilization percentage (0-100) and a reset timestamp.
+ */
+export interface UsageLimitWindow {
+    /** Current utilization as a percentage (0-100). 0 = none used, 100 = fully exhausted. */
+    utilization: number;
+    /** ISO 8601 timestamp of when this window resets. E.g. "2026-04-07T01:00:01.321075+00:00" */
+    resetsAt: string;
+}
+
+/**
+ * Structured usage data fetched from /api/organizations/{orgId}/usage.
+ * Stored as `usageLimits:{accountId}` in chrome.storage.local.
+ * Overwritten on each fetch; not appended.
+ */
+export interface UsageLimitsData {
+    /** 5-hour rolling session window. "Current session" on the Usage page. */
+    fiveHour: UsageLimitWindow;
+    /** 7-day rolling window. "Weekly limits" on the Usage page. */
+    sevenDay: UsageLimitWindow;
+    /** Unix ms timestamp of when this record was fetched. Used to detect stale data. */
+    capturedAt: number;
+}
+
+/**
+ * Zone classification for usage budget display.
+ * Determined by the higher of session and weekly utilization.
+ * comfortable: <50% | moderate: 50-74% | tight: 75-89% | critical: >=90%
+ */
+export type BudgetZone = 'comfortable' | 'moderate' | 'tight' | 'critical';
+
+/**
+ * Output of the Usage Budget Agent (lib/usage-budget.ts).
+ * All derived from UsageLimitsData; no estimation, no velocity.
+ * Every value is either exact (from the endpoint) or clearly labeled as unavailable.
+ */
+export interface UsageBudgetResult {
+    /** Session utilization as a percentage (0-100). Matches Settings > Usage exactly. */
+    sessionPct: number;
+    /** Weekly utilization as a percentage (0-100). Matches Settings > Usage exactly. */
+    weeklyPct: number;
+    /** Minutes until the 5-hour session window resets. Floored at 0. Exact from timestamp. */
+    sessionMinutesUntilReset: number;
+    /** Human-readable weekly reset label. E.g. "Wed 9:00 AM". */
+    weeklyResetLabel: string;
+    /** Zone based on max(sessionPct, weeklyPct). Drives color coding in the UI. */
+    zone: BudgetZone;
+    /** One-liner for the card's primary text. E.g. "11% used; resets in 53 min". */
+    statusLabel: string;
+}
+
+// ── Usage Limits Bridge Messages ──────────────────────────────────────────────
+
+/**
+ * Posted from the content script to the background when usage data is fetched.
+ * The content script fetches /api/organizations/{orgId}/usage directly
+ * (same session cookies, no auth needed) and forwards the parsed result here.
+ */
+export interface StoreUsageLimitsMessage {
+    type: 'STORE_USAGE_LIMITS';
+    organizationId: string;
+    fiveHourUtilization: number;
+    fiveHourResetsAt: string;
+    sevenDayUtilization: number;
+    sevenDayResetsAt: string;
 }
