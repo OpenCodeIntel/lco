@@ -1,7 +1,18 @@
 // entrypoints/sidepanel/hooks/useDashboardData.ts
-// Single data-fetching hook for the dashboard. All chrome.storage reads happen here.
-// In the multi-agent future, this hook becomes the Memory Agent interface:
-// swap the implementation, keep every component unchanged.
+//
+// Single data-fetching hook for the side panel dashboard. All chrome.storage reads
+// and chrome.tabs queries originate here. Components receive pre-computed state and
+// never touch Chrome APIs directly.
+//
+// Architecture position: this hook is the Memory Agent interface for the dashboard.
+// It sits between the React component tree and the agent layer (lib/). Swap this
+// implementation and every component stays unchanged.
+//
+// Tab awareness: the hook tracks whether the active tab is on claude.ai. Live data
+// (Usage Budget) is only loaded when isClaudeTab is true. Historical data (Today,
+// History) is always visible -- it is org-scoped, not tab-specific.
+//
+// Callers: entrypoints/sidepanel/App.tsx (sole consumer).
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -18,16 +29,65 @@ import { computeHealthScore, computeGrowthRate, type HealthScore } from '../../.
 import { computeUsageBudget } from '../../../lib/usage-budget';
 import type { UsageBudgetResult } from '../../../lib/message-types';
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// Single domain string used by every live-data gate in this file.
+// If claude.ai ever moves to a subdomain or new domain, this is the only edit needed.
+const CLAUDE_DOMAIN = 'claude.ai';
+
+// Maximum number of past conversations to load into the History panel.
+const CONVERSATION_LIMIT = 20;
+
+// ── Tab URL gate ──────────────────────────────────────────────────────────────
+
+/**
+ * Returns true if the tab identified by tabId is currently showing a claude.ai page.
+ *
+ * This is the single gate for all live data loading (Usage Budget, and any future
+ * per-tab features like pre-submit estimates or delta tracking). Every new feature
+ * that fetches live data should call this before loading.
+ *
+ * Returns false if the tab does not exist, if the URL is undefined (e.g. chrome://
+ * pages where the extension has no URL access), or if chrome.tabs.get throws for
+ * any reason.
+ *
+ * @param tabId - Chrome tab ID to check.
+ * @returns Promise that resolves to true only when the tab is on claude.ai.
+ */
+export async function isTabOnClaude(tabId: number): Promise<boolean> {
+    try {
+        const tab = await chrome.tabs.get(tabId);
+        return tab.url?.includes(CLAUDE_DOMAIN) ?? false;
+    } catch {
+        // Tab closed, extension lacks permission for that URL, or API unavailable.
+        return false;
+    }
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 export interface DashboardData {
     today: DailySummary | null;
     activeConv: ConversationRecord | null;
     activeHealth: HealthScore | null;
     conversations: ConversationRecord[];
     budget: UsageBudgetResult | null;
+    /**
+     * True when the currently active tab is on claude.ai.
+     *
+     * Use this flag to gate any interactive element or data loader that depends on
+     * an active Claude session (Usage Budget, pre-submit estimates, delta tracking,
+     * efficiency score refresh, etc.). Historical data (today, conversations) is
+     * always valid regardless of this flag.
+     *
+     * Pattern for future features:
+     *   if (!isClaudeTab) return; // disable the control or skip the fetch
+     */
+    isClaudeTab: boolean;
     loading: boolean;
 }
 
-const CONVERSATION_LIMIT = 20;
+// ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useDashboardData(): DashboardData {
     const [today, setToday] = useState<DailySummary | null>(null);
@@ -35,14 +95,25 @@ export function useDashboardData(): DashboardData {
     const [activeHealth, setActiveHealth] = useState<HealthScore | null>(null);
     const [conversations, setConversations] = useState<ConversationRecord[]>([]);
     const [budget, setBudget] = useState<UsageBudgetResult | null>(null);
+    const [isClaudeTab, setIsClaudeTab] = useState(false);
     const [loading, setLoading] = useState(true);
 
-    // Track the current tab ID so we know which activeConv_ key to watch.
+    // Track current tab ID so we know which activeConv_ key to watch.
     const tabIdRef = useRef<number | null>(null);
-    // Track the current organization ID for account-scoped queries.
+    // Track current organization ID for account-scoped queries.
     const orgIdRef = useRef<string>('');
+    // Ref mirror of isClaudeTab so event listeners (closures) can read the current
+    // value without capturing a stale boolean from the render cycle.
+    const isClaudeTabRef = useRef(false);
 
-    // ── Data loading ─────────────────────────────────────────────────────────
+    // Sync helper: always update both the React state and the ref together so
+    // they never drift. All code that changes isClaudeTab must use this.
+    function applyIsClaudeTab(value: boolean) {
+        isClaudeTabRef.current = value;
+        setIsClaudeTab(value);
+    }
+
+    // ── Data loaders ─────────────────────────────────────────────────────────
 
     const loadToday = useCallback(async () => {
         try {
@@ -140,45 +211,57 @@ export function useDashboardData(): DashboardData {
         }
     }, []);
 
-    // ── Initial load ─────────────────────────────────────────────────────────
+    // ── Initial load ──────────────────────────────────────────────────────────
 
     useEffect(() => {
         async function init() {
-            // Find the active tab in the current window.
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+            let onClaude = false;
             if (tab?.id) {
                 tabIdRef.current = tab.id;
+                onClaude = await isTabOnClaude(tab.id);
+                applyIsClaudeTab(onClaude);
                 await loadActiveConversation(tab.id);
+                // Clear stale budget immediately if we opened the panel on a non-Claude tab.
+                // Budget is live, session-bound data -- it is meaningless outside claude.ai.
+                if (!onClaude) {
+                    setBudget(null);
+                }
             }
 
-            // loadConversations first: it triggers bulk legacy migration if
-            // the account-scoped index is empty. loadToday depends on migrated
-            // conversation records to compute the daily summary correctly.
+            // loadConversations first: it triggers bulk legacy migration if the
+            // account-scoped index is empty. loadToday depends on migrated records.
+            // Both are historical (org-scoped) and load regardless of isClaudeTab.
             await loadConversations();
             await loadToday();
-            await loadBudget();
+            if (onClaude) {
+                await loadBudget();
+            }
+
             setLoading(false);
         }
 
         init();
     }, [loadToday, loadConversations, loadActiveConversation, loadBudget]);
 
-    // ── Live subscriptions ───────────────────────────────────────────────────
+    // ── Live subscriptions ────────────────────────────────────────────────────
 
     useEffect(() => {
         // Re-fetch when storage changes (new turn completed, daily summary recomputed).
-        function onStorageChanged(changes: Record<string, chrome.storage.StorageChange>, area: string) {
+        function onStorageChanged(
+            changes: Record<string, chrome.storage.StorageChange>,
+            area: string,
+        ) {
             const keys = Object.keys(changes);
 
             if (area === 'local') {
-                // A conversation record or daily summary changed.
                 const hasConvChange = keys.some(k => k.startsWith('conv:') || k.startsWith('convIndex'));
                 const hasDailyChange = keys.some(k => k.startsWith('daily:'));
                 const hasBudgetChange = keys.some(k => k.startsWith('usageLimits:'));
 
                 if (hasConvChange) {
                     loadConversations();
-                    // Also refresh active conv if it was the one that changed.
                     if (tabIdRef.current !== null) {
                         loadActiveConversation(tabIdRef.current);
                     }
@@ -186,14 +269,18 @@ export function useDashboardData(): DashboardData {
                 if (hasDailyChange) {
                     loadToday();
                 }
-                if (hasBudgetChange) {
+                // Guard: only reload budget when on a Claude tab. A background alarm can
+                // write fresh usage limits to storage while the user is on Gmail -- without
+                // this check the budget card would silently re-populate on a non-Claude tab.
+                if (hasBudgetChange && isClaudeTabRef.current) {
                     loadBudget();
                 }
             }
 
             if (area === 'session') {
-                // Active conversation or org for a tab changed (navigation, logout, account switch).
-                const hasActiveChange = keys.some(k => k.startsWith('activeConv_') || k.startsWith('activeOrg_'));
+                const hasActiveChange = keys.some(
+                    k => k.startsWith('activeConv_') || k.startsWith('activeOrg_'),
+                );
                 if (hasActiveChange && tabIdRef.current !== null) {
                     loadActiveConversation(tabIdRef.current);
                 }
@@ -201,29 +288,79 @@ export function useDashboardData(): DashboardData {
         }
 
         // Tab switch: user clicked a different tab in the same window.
-        function onTabActivated(info: { tabId: number; windowId: number }) {
+        // Async because we need to check the new tab's URL before deciding what to load.
+        async function onTabActivated(info: { tabId: number; windowId: number }) {
+            // Record the new tab immediately so any concurrent resolution can detect staleness.
             tabIdRef.current = info.tabId;
-            loadActiveConversation(info.tabId);
+
+            const onClaude = await isTabOnClaude(info.tabId);
+
+            // Stale-check: if the user switched tabs again while this await was in flight,
+            // discard this result. The newer activation will apply its own state.
+            if (tabIdRef.current !== info.tabId) return;
+
+            applyIsClaudeTab(onClaude);
+
+            // loadActiveConversation updates orgIdRef; budget loading reads orgIdRef.
+            // Await it so loadBudget sees the correct org scope.
+            await loadActiveConversation(info.tabId);
+
+            if (onClaude) {
+                loadBudget();
+            } else {
+                // Explicitly clear budget -- do not show stale data from the previous
+                // Claude tab while the user is on Gmail, GitHub, etc.
+                setBudget(null);
+            }
+        }
+
+        // URL changed within the currently-active tab (e.g. the user navigated from
+        // claude.ai to gmail.com without switching tabs). onTabActivated does not fire
+        // in this case, so we need this separate listener.
+        function onTabUpdated(
+            tabId: number,
+            changeInfo: chrome.tabs.OnUpdatedInfo,
+        ) {
+            // Only care about URL changes on the tab the panel is currently tracking.
+            if (tabId !== tabIdRef.current) return;
+            // changeInfo.url is only present when the URL actually changed.
+            if (!changeInfo.url) return;
+
+            const onClaude = changeInfo.url.includes(CLAUDE_DOMAIN);
+            applyIsClaudeTab(onClaude);
+
+            if (onClaude) {
+                // Navigated back to claude.ai: reload live data.
+                loadBudget();
+            } else {
+                // Navigated away: clear live data immediately.
+                setBudget(null);
+            }
         }
 
         // Tab closed while panel is open.
         function onTabRemoved(removedTabId: number) {
-            if (removedTabId === tabIdRef.current) {
-                setActiveConv(null);
-                setActiveHealth(null);
-            }
+            if (removedTabId !== tabIdRef.current) return;
+            setActiveConv(null);
+            setActiveHealth(null);
+            // The closed tab was on Claude; mark the panel as not-Claude since there
+            // is no active tab to track. The user will need to click another tab.
+            applyIsClaudeTab(false);
+            setBudget(null);
         }
 
         chrome.storage.onChanged.addListener(onStorageChanged);
         chrome.tabs.onActivated.addListener(onTabActivated);
+        chrome.tabs.onUpdated.addListener(onTabUpdated);
         chrome.tabs.onRemoved.addListener(onTabRemoved);
 
         return () => {
             chrome.storage.onChanged.removeListener(onStorageChanged);
             chrome.tabs.onActivated.removeListener(onTabActivated);
+            chrome.tabs.onUpdated.removeListener(onTabUpdated);
             chrome.tabs.onRemoved.removeListener(onTabRemoved);
         };
     }, [loadToday, loadConversations, loadActiveConversation, loadBudget]);
 
-    return { today, activeConv, activeHealth, conversations, budget, loading };
+    return { today, activeConv, activeHealth, conversations, budget, isClaudeTab, loading };
 }

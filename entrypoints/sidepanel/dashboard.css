@@ -365,6 +365,26 @@ body {
     color: var(--lco-text-secondary);
 }
 
+/* ── Non-Claude tab banner ──────────────────────────────────────────────────── */
+/* Shown above Usage Budget when the active tab is not on claude.ai.            */
+/* Muted and informational only -- no border, no icon, no alarm.                */
+
+.lco-dash-not-claude-banner {
+    font-size: 12px;
+    color: var(--lco-text-muted);
+    text-align: center;
+    padding: 6px 12px 10px;
+    font-style: italic;
+    opacity: 1;
+    transition: opacity var(--lco-transition);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lco-dash-not-claude-banner {
+        transition: none;
+    }
+}
+
 /* ── Usage Budget card ──────────────────────────────────────────────────────── */
 /* Data from /api/organizations/{orgId}/usage: exact session + weekly percentages. */
 /* Zone colors mirror the health dot system: green → yellow → orange → red.      */
