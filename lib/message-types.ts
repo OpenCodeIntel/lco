@@ -150,6 +150,12 @@ export interface RecordTurnMessage {
     cost: number | null;
     /** First meaningful line of user prompt, for Conversation DNA. */
     topicHint?: string;
+    /**
+     * 5-hour session utilization consumed by this turn, in percentage points.
+     * null when before/after snapshots were unavailable (e.g. first load, session
+     * reset mid-turn, or fetch failure). Non-optional so omission is a compile error.
+     */
+    deltaUtilization: number | null;
 }
 
 /** Mark a conversation as finalized (user navigated away or tab closed) */

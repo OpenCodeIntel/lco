@@ -27,6 +27,13 @@ export interface OverlayState {
     streaming: boolean;
     /** Conversation health assessment. Null until first STREAM_COMPLETE. */
     health: HealthScore | null;
+    /**
+     * 5-hour session utilization consumed by the most recent reply, in percentage points.
+     * Exact value from Anthropic's usage endpoint (after - before snapshot).
+     * Null until the first post-stream usage fetch resolves, or when delta was
+     * uncomputable (fetch failure, session reset, first load).
+     */
+    lastDeltaUtilization: number | null;
 }
 
 export const INITIAL_STATE: Readonly<OverlayState> = {
@@ -37,6 +44,7 @@ export const INITIAL_STATE: Readonly<OverlayState> = {
     healthBroken: null,
     streaming: false,
     health: null,
+    lastDeltaUtilization: null,
 };
 
 

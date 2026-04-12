@@ -240,8 +240,15 @@ export function createOverlay(): OverlayHandle {
 
         if (elCurrentRequest && state.lastRequest) {
             const { inputTokens, outputTokens, cost } = state.lastRequest;
-            elCurrentRequest.textContent =
-                `~${fmt(inputTokens)} in · ~${fmt(outputTokens)} out · ${fmtCost(cost)}`;
+            // Lead with exact session % when available (Anthropic endpoint, not estimated).
+            // Falls back to token/cost display when delta has not yet resolved.
+            if (state.lastDeltaUtilization !== null) {
+                elCurrentRequest.textContent =
+                    `${state.lastDeltaUtilization.toFixed(1)}% of session · ${fmtCost(cost)}`;
+            } else {
+                elCurrentRequest.textContent =
+                    `~${fmt(inputTokens)} in · ~${fmt(outputTokens)} out · ${fmtCost(cost)}`;
+            }
         }
 
         // Health indicator: show the three-state label with colored dot.

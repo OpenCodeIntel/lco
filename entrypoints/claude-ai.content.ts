@@ -55,20 +55,24 @@ async function fetchStoredRecord(orgId: string | null, conversationId: string): 
 }
 
 /**
- * Fetch the Anthropic usage limits for this account and forward to background.
- * The usage endpoint returns exact session and weekly utilization with reset timestamps.
- * This is the same data shown on claude.ai/settings/limits.
+ * Fetch the Anthropic usage limits for this account, forward to background for
+ * storage, and return the 5-hour session utilization percentage.
  *
- * Called on ORGANIZATION_DETECTED (page load) and after each STREAM_COMPLETE
- * so the side panel always shows fresh numbers without requiring the user to
- * visit the Settings > Usage page.
+ * The usage endpoint returns exact session and weekly utilization with reset
+ * timestamps — the same data shown on claude.ai/settings/limits.
  *
- * Fire-and-forget: failures are non-critical (dashboard just shows previous data).
+ * Called on ORGANIZATION_DETECTED (page load) and after each STREAM_COMPLETE.
+ * The returned utilization value is used for delta tracking: the caller snapshots
+ * the before-value, calls this, and subtracts to get the exact session cost of
+ * the last message.
+ *
+ * Returns null on any failure (network error, malformed response). The caller
+ * treats null as "delta uncomputable" and records the turn without a delta.
  */
-async function fetchAndStoreUsageLimits(orgId: string): Promise<void> {
+async function fetchAndStoreUsageLimits(orgId: string): Promise<number | null> {
     try {
         const response = await fetch(`/api/organizations/${orgId}/usage`, { credentials: 'same-origin' });
-        if (!response.ok) return;
+        if (!response.ok) return null;
         const data = await response.json() as {
             five_hour?: { utilization?: number; resets_at?: string };
             seven_day?: { utilization?: number; resets_at?: string };
@@ -78,7 +82,7 @@ async function fetchAndStoreUsageLimits(orgId: string): Promise<void> {
         if (
             !fiveHour || typeof fiveHour.utilization !== 'number' || typeof fiveHour.resets_at !== 'string' ||
             !sevenDay || typeof sevenDay.utilization !== 'number' || typeof sevenDay.resets_at !== 'string'
-        ) return;
+        ) return null;
         browser.runtime.sendMessage({
             type: 'STORE_USAGE_LIMITS',
             organizationId: orgId,
@@ -87,8 +91,10 @@ async function fetchAndStoreUsageLimits(orgId: string): Promise<void> {
             sevenDayUtilization: sevenDay.utilization,
             sevenDayResetsAt: sevenDay.resets_at,
         } satisfies StoreUsageLimitsMessage).catch(() => { /* non-critical */ });
+        return fiveHour.utilization;
     } catch {
         // Network errors are silently ignored; the dashboard shows stale data.
+        return null;
     }
 }
 
@@ -140,6 +146,12 @@ async function initializeMonitoring(): Promise<void> {
     // Tracks how many consecutive short follow-ups the user has sent.
     // Resets on SPA navigation alongside other conversation state.
     let consecutiveShortFollowUps = 0;
+
+    // Last known 5-hour session utilization from the Anthropic usage endpoint.
+    // Snapshot before each stream, then read again after STREAM_COMPLETE to
+    // compute the exact session % consumed by that message (delta tracking).
+    // Null until the first successful usage fetch (ORGANIZATION_DETECTED).
+    let lastKnownUtilization: number | null = null;
 
     // Restore state from stored conversation record if one exists.
     // This gives the overlay correct context % and turn count immediately
@@ -230,9 +242,13 @@ async function initializeMonitoring(): Promise<void> {
                     scheduleConversationRestore(currentOrgId, currentConversationId);
                 }
 
-                // Fetch usage limits now that we have the org ID.
-                // Populates the Usage Budget card in the side panel immediately on load.
-                fetchAndStoreUsageLimits(currentOrgId).catch(() => { /* non-critical */ });
+                // Fetch usage limits now that we have the org ID. Populates the
+                // Usage Budget card in the side panel immediately on load.
+                // Capture the returned utilization as the initial before-snapshot
+                // so the first STREAM_COMPLETE can compute a delta.
+                fetchAndStoreUsageLimits(currentOrgId).then(u => {
+                    if (u !== null) lastKnownUtilization = u;
+                });
             }
             return; // ORGANIZATION_DETECTED is handled; no further processing.
         }
@@ -333,27 +349,72 @@ async function initializeMonitoring(): Promise<void> {
                 overlay.hideNudge();
             }
 
-            // Persist turn to conversation history in chrome.storage.local.
-            // topicHint (first meaningful line of user prompt) flows from inject.ts
-            // through the bridge for Conversation DNA.
+            // Persist turn and compute exact session delta.
+            //
+            // Delta tracking: snapshot utilization before, fetch Anthropic's usage
+            // endpoint after, subtract. This gives the exact 5-hour session percentage
+            // consumed by this one message — from Anthropic directly, not estimated.
+            //
+            // The fetch is the same call that refreshes the side panel budget card, so
+            // there is no extra API call: we just capture the returned value this time.
             if (currentConversationId && currentOrgId) {
-                browser.runtime.sendMessage({
-                    type: 'RECORD_TURN',
-                    organizationId: currentOrgId,
-                    conversationId: currentConversationId,
-                    inputTokens: msg.inputTokens,
-                    outputTokens: msg.outputTokens,
-                    model: msg.model,
-                    contextPct: state.contextPct ?? 0,
-                    cost: calculateCost(msg.inputTokens, msg.outputTokens, msg.model),
-                    topicHint: msg.topicHint,
-                } satisfies RecordTurnMessage).catch((err) => {
-                    console.error('[LCO-ERROR] Failed to record conversation turn:', err);
-                });
+                // Capture all turn data synchronously before any await. These values
+                // are used inside the async callback below; closures over the mutable
+                // `msg` reference would be unsafe after the event handler returns.
+                const orgId = currentOrgId;
+                const convId = currentConversationId;
+                const utilizationBefore = lastKnownUtilization;
+                const turnInputTokens = msg.inputTokens;
+                const turnOutputTokens = msg.outputTokens;
+                const turnModel = msg.model;
+                const turnContextPct = state.contextPct ?? 0;
+                const turnCost = calculateCost(msg.inputTokens, msg.outputTokens, msg.model);
+                const turnTopicHint = msg.topicHint;
 
-                // Refresh usage limits after each response so the side panel
-                // shows the updated session percentage without requiring a page reload.
-                fetchAndStoreUsageLimits(currentOrgId).catch(() => { /* non-critical */ });
+                // fetchAndStoreUsageLimits catches all errors internally; it never
+                // throws. The .then() always runs.
+                fetchAndStoreUsageLimits(orgId).then(utilizationAfter => {
+                    // Update the cached value so the next STREAM_COMPLETE has a
+                    // fresh before-snapshot. Only update on valid (non-null) reads.
+                    if (utilizationAfter !== null) {
+                        lastKnownUtilization = utilizationAfter;
+                    }
+
+                    // Delta is valid only when both snapshots exist and usage went up.
+                    // A negative or zero delta indicates a session reset between the two
+                    // fetches, or a duplicate event — both cases produce null delta.
+                    let deltaUtilization: number | null = null;
+                    if (
+                        utilizationBefore !== null &&
+                        utilizationAfter !== null &&
+                        utilizationAfter > utilizationBefore
+                    ) {
+                        deltaUtilization = utilizationAfter - utilizationBefore;
+                    }
+
+                    // Update overlay immediately with the exact session cost for
+                    // this reply. Re-render so the user sees "X.X% of session" the
+                    // moment the usage endpoint responds (typically < 200ms post-stream).
+                    if (deltaUtilization !== null) {
+                        state = { ...state, lastDeltaUtilization: deltaUtilization };
+                        overlay.render(state);
+                    }
+
+                    browser.runtime.sendMessage({
+                        type: 'RECORD_TURN',
+                        organizationId: orgId,
+                        conversationId: convId,
+                        inputTokens: turnInputTokens,
+                        outputTokens: turnOutputTokens,
+                        model: turnModel,
+                        contextPct: turnContextPct,
+                        cost: turnCost,
+                        topicHint: turnTopicHint,
+                        deltaUtilization,
+                    } satisfies RecordTurnMessage).catch((err) => {
+                        console.error('[LCO-ERROR] Failed to record conversation turn:', err);
+                    });
+                });
             }
 
             browser.runtime.sendMessage({

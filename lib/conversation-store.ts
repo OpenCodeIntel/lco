@@ -16,6 +16,30 @@ export interface TurnRecord {
     contextPct: number;
     cost: number | null;
     completedAt: number;
+    /**
+     * 5-hour session utilization consumed by this turn, in percentage points.
+     * null when before/after utilization snapshots were unavailable (e.g. first
+     * load before any limits fetch, or a session reset between snapshots).
+     * Optional for backwards compatibility with records written before LCO-34.
+     */
+    deltaUtilization?: number | null;
+}
+
+/**
+ * One delta record per completed turn, stored in the append-only delta log.
+ * Used by the Token Economics agent to derive median tokens-per-1% per model.
+ * Only records with a valid (non-null) delta are stored — null deltas are
+ * dropped at the call site in background.ts.
+ */
+export interface UsageDelta {
+    conversationId: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    /** 5-hour session utilization consumed, in percentage points. Always > 0 when stored. */
+    deltaUtilization: number;
+    cost: number | null;
+    timestamp: number;
 }
 
 /**
@@ -104,6 +128,9 @@ export interface WeeklySummary {
 export const MAX_TURNS_PER_RECORD = 50;
 export const RETENTION_DAYS = 90;
 export const CRITICAL_CONTEXT_PCT = 80;
+// Append-only delta log cap. Oldest records are pruned when this is exceeded.
+// At ~50 bytes per record, 500 entries is ~25 KB — well within storage.local limits.
+export const MAX_USAGE_DELTAS = 500;
 
 // Storage key builders. All keys are scoped to an accountId (organization UUID)
 // so multiple Claude accounts sharing one browser get isolated data.
@@ -119,6 +146,8 @@ function weeklyKey(accountId: string, weekId: string): string { assertAccountId(
 function weeklyIndexKey(accountId: string): string { assertAccountId(accountId); return `weeklyIndex:${accountId}`; }
 // Single record per account; overwritten on each fetch (no append, no prune needed).
 function usageLimitsKey(accountId: string): string { assertAccountId(accountId); return `usageLimits:${accountId}`; }
+// Append-only delta log, capped at MAX_USAGE_DELTAS. Key referenced in claude-ai.content.ts.
+function usageDeltasKey(accountId: string): string { assertAccountId(accountId); return `usageDeltas:${accountId}`; }
 
 // Legacy (pre-account-isolation) key builders for read-through migration.
 function legacyConvKey(convId: string): string { return `conv:${convId}`; }
@@ -707,4 +736,46 @@ export async function getUsageLimits(accountId: string): Promise<UsageLimitsData
     const key = usageLimitsKey(accountId);
     const data = await store().get(key);
     return (data[key] as UsageLimitsData | undefined) ?? null;
+}
+
+// ── Usage delta log ───────────────────────────────────────────────────────────
+// Append-only array, one entry per completed turn where delta was measurable.
+// Used by lib/token-economics.ts to derive median tokens-per-1% per model.
+// Oldest entries are pruned when the cap is exceeded.
+
+/**
+ * Append one usage delta record to the per-account delta log.
+ * Prunes the oldest entries when the log exceeds MAX_USAGE_DELTAS.
+ *
+ * @param accountId - Organization UUID (scopes the log to one Claude account)
+ * @param delta     - Completed-turn delta record to append
+ */
+export async function appendUsageDelta(accountId: string, delta: UsageDelta): Promise<void> {
+    const key = usageDeltasKey(accountId);
+    const data = await store().get(key);
+    const existing = data[key];
+    const records: UsageDelta[] = Array.isArray(existing) ? existing as UsageDelta[] : [];
+
+    records.push(delta);
+
+    // Drop oldest entries when over the cap.
+    const overflow = records.length - MAX_USAGE_DELTAS;
+    if (overflow > 0) {
+        records.splice(0, overflow);
+    }
+
+    await store().set({ [key]: records });
+}
+
+/**
+ * Read all usage delta records for an account, oldest first.
+ * Returns an empty array when no records exist.
+ *
+ * @param accountId - Organization UUID
+ */
+export async function getUsageDeltas(accountId: string): Promise<UsageDelta[]> {
+    const key = usageDeltasKey(accountId);
+    const data = await store().get(key);
+    const records = data[key];
+    return Array.isArray(records) ? records as UsageDelta[] : [];
 }

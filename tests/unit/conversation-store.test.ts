@@ -20,11 +20,15 @@ import {
     getWeeklySummary,
     storeUsageLimits,
     getUsageLimits,
+    appendUsageDelta,
+    getUsageDeltas,
     MAX_TURNS_PER_RECORD,
+    MAX_USAGE_DELTAS,
     CRITICAL_CONTEXT_PCT,
     type StorageArea,
     type TurnRecord,
     type ConversationRecord,
+    type UsageDelta,
 } from '../../lib/conversation-store';
 import type { UsageLimitsData } from '../../lib/message-types';
 
@@ -831,5 +835,117 @@ describe('storeUsageLimits / getUsageLimits', () => {
         await expect(
             getUsageLimits(''),
         ).rejects.toThrow('[LCO] accountId required for scoped storage key');
+    });
+});
+
+// ── Usage delta log (LCO-34) ──────────────────────────────────────────────────
+
+function makeDelta(overrides: Partial<UsageDelta> = {}): UsageDelta {
+    return {
+        conversationId: 'conv-delta-test',
+        model: 'claude-sonnet-4-6',
+        inputTokens: 500,
+        outputTokens: 150,
+        deltaUtilization: 2.5,
+        cost: 0.003,
+        timestamp: Date.now(),
+        ...overrides,
+    };
+}
+
+describe('appendUsageDelta / getUsageDeltas', () => {
+    it('returns empty array when no deltas have been stored', async () => {
+        const result = await getUsageDeltas(TEST_ORG);
+        expect(result).toEqual([]);
+    });
+
+    it('appends a single delta record and retrieves it', async () => {
+        const delta = makeDelta();
+        await appendUsageDelta(TEST_ORG, delta);
+        const result = await getUsageDeltas(TEST_ORG);
+        expect(result).toHaveLength(1);
+        expect(result[0].deltaUtilization).toBe(2.5);
+        expect(result[0].model).toBe('claude-sonnet-4-6');
+    });
+
+    it('appends multiple records in order (oldest first)', async () => {
+        await appendUsageDelta(TEST_ORG, makeDelta({ deltaUtilization: 1.0, timestamp: 1000 }));
+        await appendUsageDelta(TEST_ORG, makeDelta({ deltaUtilization: 3.0, timestamp: 2000 }));
+        await appendUsageDelta(TEST_ORG, makeDelta({ deltaUtilization: 2.0, timestamp: 3000 }));
+
+        const result = await getUsageDeltas(TEST_ORG);
+        expect(result).toHaveLength(3);
+        expect(result[0].deltaUtilization).toBe(1.0);
+        expect(result[1].deltaUtilization).toBe(3.0);
+        expect(result[2].deltaUtilization).toBe(2.0);
+    });
+
+    it('prunes oldest records when cap is exceeded', async () => {
+        // Fill to exactly the cap.
+        for (let i = 0; i < MAX_USAGE_DELTAS; i++) {
+            await appendUsageDelta(TEST_ORG, makeDelta({ deltaUtilization: i, timestamp: i }));
+        }
+
+        // Add one more: should push oldest off.
+        await appendUsageDelta(TEST_ORG, makeDelta({ deltaUtilization: 999, timestamp: MAX_USAGE_DELTAS }));
+
+        const result = await getUsageDeltas(TEST_ORG);
+        expect(result).toHaveLength(MAX_USAGE_DELTAS);
+        // The record with deltaUtilization === 0 (timestamp 0) should be gone.
+        expect(result[0].deltaUtilization).toBe(1);
+        // The new record should be at the end.
+        expect(result[result.length - 1].deltaUtilization).toBe(999);
+    });
+
+    it('isolates delta logs between accounts', async () => {
+        const orgA = 'org-delta-a';
+        const orgB = 'org-delta-b';
+
+        await appendUsageDelta(orgA, makeDelta({ deltaUtilization: 5.0 }));
+        await appendUsageDelta(orgB, makeDelta({ deltaUtilization: 8.0 }));
+
+        const a = await getUsageDeltas(orgA);
+        const b = await getUsageDeltas(orgB);
+        expect(a).toHaveLength(1);
+        expect(b).toHaveLength(1);
+        expect(a[0].deltaUtilization).toBe(5.0);
+        expect(b[0].deltaUtilization).toBe(8.0);
+    });
+
+    it('throws when accountId is empty string', async () => {
+        await expect(appendUsageDelta('', makeDelta())).rejects.toThrow(
+            '[LCO] accountId required for scoped storage key',
+        );
+        await expect(getUsageDeltas('')).rejects.toThrow(
+            '[LCO] accountId required for scoped storage key',
+        );
+    });
+});
+
+describe('recordTurn with deltaUtilization', () => {
+    it('stores deltaUtilization on the turn record when provided', async () => {
+        const convId = 'conv-with-delta';
+        await recordTurn(TEST_ORG, convId, makeTurn({ deltaUtilization: 3.7 }));
+        const record = await getConversation(TEST_ORG, convId);
+        expect(record?.turns[0].deltaUtilization).toBe(3.7);
+    });
+
+    it('stores null deltaUtilization when not computable', async () => {
+        const convId = 'conv-null-delta';
+        await recordTurn(TEST_ORG, convId, makeTurn({ deltaUtilization: null }));
+        const record = await getConversation(TEST_ORG, convId);
+        expect(record?.turns[0].deltaUtilization).toBeNull();
+    });
+
+    it('preserves deltaUtilization across multiple turns', async () => {
+        const convId = 'conv-multi-delta';
+        await recordTurn(TEST_ORG, convId, makeTurn({ deltaUtilization: 2.0 }));
+        await recordTurn(TEST_ORG, convId, makeTurn({ deltaUtilization: 3.5 }));
+        await recordTurn(TEST_ORG, convId, makeTurn({ deltaUtilization: null }));
+
+        const record = await getConversation(TEST_ORG, convId);
+        expect(record?.turns[0].deltaUtilization).toBe(2.0);
+        expect(record?.turns[1].deltaUtilization).toBe(3.5);
+        expect(record?.turns[2].deltaUtilization).toBeNull();
     });
 });

@@ -224,6 +224,47 @@ describe('applyMessageLimit', () => {
     });
 });
 
+// ── lastDeltaUtilization (LCO-34) ────────────────────────────────────────────
+
+describe('lastDeltaUtilization in INITIAL_STATE', () => {
+    it('starts as null', () => {
+        expect(INITIAL_STATE.lastDeltaUtilization).toBeNull();
+    });
+});
+
+describe('lastDeltaUtilization spread semantics', () => {
+    it('is preserved through applyTokenBatch', () => {
+        const state: OverlayState = { ...INITIAL_STATE, lastDeltaUtilization: 3.7 };
+        const next = applyTokenBatch(state, TOKEN_PAYLOAD);
+        expect(next.lastDeltaUtilization).toBe(3.7);
+    });
+
+    it('is preserved through applyStreamComplete', () => {
+        const state: OverlayState = { ...INITIAL_STATE, lastDeltaUtilization: 2.1 };
+        const next = applyStreamComplete(state, TOKEN_PAYLOAD);
+        expect(next.lastDeltaUtilization).toBe(2.1);
+    });
+
+    it('is preserved through applyStorageResponse', () => {
+        const state: OverlayState = { ...INITIAL_STATE, lastDeltaUtilization: 5.0 };
+        const next = applyStorageResponse(state, makeTabState());
+        expect(next.lastDeltaUtilization).toBe(5.0);
+    });
+
+    it('can be set via spread on INITIAL_STATE (content script pattern)', () => {
+        const state: OverlayState = { ...INITIAL_STATE, lastDeltaUtilization: 4.2 };
+        expect(state.lastDeltaUtilization).toBe(4.2);
+    });
+
+    it('resets to null when spreading INITIAL_STATE (nav reset pattern)', () => {
+        const state: OverlayState = { ...INITIAL_STATE, lastDeltaUtilization: 8.0 };
+        const reset: OverlayState = { ...INITIAL_STATE };
+        expect(reset.lastDeltaUtilization).toBeNull();
+        // The old state is unchanged.
+        expect(state.lastDeltaUtilization).toBe(8.0);
+    });
+});
+
 // ── state immutability (cross-function) ───────────────────────────────────────
 
 describe('immutability', () => {

@@ -53,6 +53,11 @@ export default function ActiveConversation({ conv, health }: Props) {
     const healthLevel = health?.level ?? 'healthy';
     const healthLabel = health?.label ?? 'Healthy';
 
+    // Total exact session % consumed by all turns in this conversation.
+    // Only turns with a valid delta contribute; pre-LCO-34 turns contribute 0.
+    const totalDelta = conv.turns.reduce((sum, t) => sum + (t.deltaUtilization ?? 0), 0);
+    const showDelta = totalDelta > 0.01;
+
     return (
         <div className={`lco-dash-active ${visible ? 'lco-dash-active--visible' : 'lco-dash-active--hidden'}`}>
             <div className="lco-dash-active-header">
@@ -75,7 +80,10 @@ export default function ActiveConversation({ conv, health }: Props) {
             <div className="lco-dash-active-stats">
                 <span>{conv.turnCount} turn{conv.turnCount === 1 ? '' : 's'}</span>
                 <span>{formatTokens(conv.totalInputTokens + conv.totalOutputTokens)} tokens</span>
-                <span>{formatCost(conv.estimatedCost)}</span>
+                {showDelta
+                    ? <span>{totalDelta.toFixed(1)}% of session</span>
+                    : <span>{formatCost(conv.estimatedCost)}</span>
+                }
             </div>
         </div>
     );
