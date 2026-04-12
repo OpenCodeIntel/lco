@@ -28,7 +28,7 @@ export interface TurnRecord {
 /**
  * One delta record per completed turn, stored in the append-only delta log.
  * Used by the Token Economics agent to derive median tokens-per-1% per model.
- * Only records with a valid (non-null) delta are stored — null deltas are
+ * Only records with a valid (non-null) delta are stored; null deltas are
  * dropped at the call site in background.ts.
  */
 export interface UsageDelta {
@@ -129,7 +129,7 @@ export const MAX_TURNS_PER_RECORD = 50;
 export const RETENTION_DAYS = 90;
 export const CRITICAL_CONTEXT_PCT = 80;
 // Append-only delta log cap. Oldest records are pruned when this is exceeded.
-// At ~50 bytes per record, 500 entries is ~25 KB — well within storage.local limits.
+// At ~50 bytes per record, 500 entries is ~25 KB, well within storage.local limits.
 export const MAX_USAGE_DELTAS = 500;
 
 // Storage key builders. All keys are scoped to an accountId (organization UUID)

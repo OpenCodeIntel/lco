@@ -169,6 +169,8 @@ export function useDashboardData(): DashboardData {
         }
         try {
             const deltas = await getUsageDeltas(orgId);
+            // Stale-check: org may have changed while getUsageDeltas was in flight.
+            if (orgIdRef.current !== orgId) return;
             // computeTokenEconomics filters models below MIN_SAMPLES internally.
             // Returns empty Maps when not enough data exists yet.
             setTokenEconomics(computeTokenEconomics(deltas));
@@ -203,6 +205,8 @@ export function useDashboardData(): DashboardData {
                 if (!orgId && prevOrg) {
                     setToday(null);
                     setConversations([]);
+                    setBudget(null);
+                    setTokenEconomics(null);
                 }
                 return;
             }
