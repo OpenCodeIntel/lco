@@ -285,3 +285,86 @@ describe('analyzePrompt: multiple signals', () => {
         expect(signals.find(x => x.type === 'follow_up_chain')).toBeDefined();
     });
 });
+
+// ── Delta-enhanced model_suggestion ──────────────────────────────────────────
+
+describe('model_suggestion with delta data', () => {
+    const shortPrompt: PromptCharacteristics = { promptLength: 30, hasCodeBlock: false, isShortFollowUp: true };
+
+    it('includes session % when delta data is available on Opus', () => {
+        const signals = analyzePrompt(shortPrompt, 'claude-opus-4-6', 1, {
+            currentDelta: 3.2,
+            haikuMedianDelta: 0.6,
+        });
+        const ms = signals.find(x => x.type === 'model_suggestion');
+        expect(ms).toBeDefined();
+        expect(ms!.message).toContain('3.2%');
+        expect(ms!.message).toContain('0.6%');
+        expect(ms!.message).toContain('Opus');
+        expect(ms!.message).toContain('Haiku');
+    });
+
+    it('falls back to generic message when delta is undefined', () => {
+        const signals = analyzePrompt(shortPrompt, 'claude-opus-4-6', 1);
+        const ms = signals.find(x => x.type === 'model_suggestion');
+        expect(ms).toBeDefined();
+        expect(ms!.message).toContain('5x lower cost');
+    });
+
+    it('falls back to generic message when currentDelta is null', () => {
+        const signals = analyzePrompt(shortPrompt, 'claude-opus-4-6', 1, {
+            currentDelta: null,
+            haikuMedianDelta: 0.6,
+        });
+        const ms = signals.find(x => x.type === 'model_suggestion');
+        expect(ms).toBeDefined();
+        expect(ms!.message).toContain('5x lower cost');
+    });
+
+    it('falls back to generic message when haikuMedianDelta is null', () => {
+        const signals = analyzePrompt(shortPrompt, 'claude-opus-4-6', 1, {
+            currentDelta: 3.2,
+            haikuMedianDelta: null,
+        });
+        const ms = signals.find(x => x.type === 'model_suggestion');
+        expect(ms).toBeDefined();
+        expect(ms!.message).toContain('5x lower cost');
+    });
+
+    it('fires for Sonnet when delta data is available', () => {
+        const signals = analyzePrompt(shortPrompt, 'claude-sonnet-4-6', 1, {
+            currentDelta: 2.1,
+            haikuMedianDelta: 0.4,
+        });
+        const ms = signals.find(x => x.type === 'model_suggestion');
+        expect(ms).toBeDefined();
+        expect(ms!.message).toContain('2.1%');
+        expect(ms!.message).toContain('Sonnet');
+        expect(ms!.message).toContain('Haiku');
+    });
+
+    it('does not fire for Sonnet without delta data', () => {
+        const signals = analyzePrompt(shortPrompt, 'claude-sonnet-4-6', 1);
+        const ms = signals.find(x => x.type === 'model_suggestion');
+        expect(ms).toBeUndefined();
+    });
+
+    it('does not fire for Haiku (cheapest tier)', () => {
+        const signals = analyzePrompt(shortPrompt, 'claude-haiku-4-5', 1, {
+            currentDelta: 0.5,
+            haikuMedianDelta: 0.5,
+        });
+        const ms = signals.find(x => x.type === 'model_suggestion');
+        expect(ms).toBeUndefined();
+    });
+
+    it('does not fire for Opus with code block even with delta data', () => {
+        const codePrompt: PromptCharacteristics = { promptLength: 30, hasCodeBlock: true, isShortFollowUp: false };
+        const signals = analyzePrompt(codePrompt, 'claude-opus-4-6', 1, {
+            currentDelta: 3.2,
+            haikuMedianDelta: 0.6,
+        });
+        const ms = signals.find(x => x.type === 'model_suggestion');
+        expect(ms).toBeUndefined();
+    });
+});

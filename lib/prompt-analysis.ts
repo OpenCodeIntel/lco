@@ -25,6 +25,7 @@
 // Input:  PromptCharacteristics (extracted by inject.ts, carried on STREAM_COMPLETE)
 //         + model name (string)
 //         + recentShortFollowUps count (tracked by the content script)
+//         + DeltaPromptContext (optional; provided after async usage fetch returns)
 // Output: ContextSignal[] with types: model_suggestion, large_paste, follow_up_chain
 // All output signals have severity 'info'. Context health signals (warning/critical)
 // always win in pickTopSignal. Prompt coaching only shows when the conversation
@@ -97,6 +98,21 @@ export function classifyModelTier(model: string): { tier: string; label: string 
     return null;
 }
 
+// ── Delta context for model efficiency coaching ────────────────────────────
+
+/**
+ * Optional delta data for enriching the model_suggestion signal with exact
+ * session % comparisons. Passed by the orchestrator after the async usage
+ * fetch returns. When absent, the signal falls back to the generic message.
+ */
+export interface DeltaPromptContext {
+    /** Session % this turn cost on the current model. Null if delta unavailable. */
+    currentDelta: number | null;
+    /** Estimated session % this turn would cost on Haiku, derived from token
+     *  economics medians. Null if Haiku has insufficient samples. */
+    haikuMedianDelta: number | null;
+}
+
 // ── Analysis ────────────────────────────────────────────────────────────────
 
 /**
@@ -107,30 +123,55 @@ export function classifyModelTier(model: string): { tier: string; label: string 
  * @param model - Model name used for this turn
  * @param recentShortFollowUps - Count of consecutive short follow-ups ending
  *   with this turn (caller tracks this across turns)
+ * @param delta - Optional delta data for model efficiency coaching. When
+ *   provided with valid values, the model_suggestion signal includes exact
+ *   session % comparisons instead of generic cost multipliers.
  * @returns ContextSignal[] with types model_suggestion, large_paste, follow_up_chain
  */
 export function analyzePrompt(
     chars: PromptCharacteristics,
     model: string,
     recentShortFollowUps: number,
+    delta?: DeltaPromptContext,
 ): ContextSignal[] {
     const signals: ContextSignal[] = [];
 
-    // 1. model_suggestion: short, no-code prompt on Opus -> suggest Haiku.
-    // Only fires for Opus; savings from Sonnet to Haiku are less dramatic.
+    // 1. model_suggestion: short, no-code prompt on a premium model -> suggest Haiku.
+    //
+    // When delta data is available, the message includes exact session % for both
+    // models, making the savings concrete. When delta is missing, falls back to
+    // the generic cost multiplier message.
+    //
+    // Fires for Opus (always) and Sonnet (only when delta data is available,
+    // because the generic "5x cheaper" message does not apply to Sonnet).
     const tier = classifyModelTier(model);
+    const hasDeltaComparison = delta?.currentDelta !== null &&
+        delta?.currentDelta !== undefined &&
+        delta?.haikuMedianDelta !== null &&
+        delta?.haikuMedianDelta !== undefined;
+
     if (
         tier !== null &&
-        tier.tier === 'opus' &&
+        (tier.tier === 'opus' || (tier.tier === 'sonnet' && hasDeltaComparison)) &&
         chars.promptLength < 200 &&
         !chars.hasCodeBlock
     ) {
-        signals.push({
-            type: 'model_suggestion',
-            severity: 'info',
-            message: `Simple question detected on ${tier.label}. Haiku could handle this at ~5x lower cost.`,
-            dismissible: true,
-        });
+        if (hasDeltaComparison) {
+            signals.push({
+                type: 'model_suggestion',
+                severity: 'info',
+                message: `That follow-up cost ${delta!.currentDelta!.toFixed(1)}% on ${tier.label}. On Haiku: ~${delta!.haikuMedianDelta!.toFixed(1)}%.`,
+                dismissible: true,
+            });
+        } else if (tier.tier === 'opus') {
+            // Generic fallback: only for Opus where the 5x multiplier is accurate.
+            signals.push({
+                type: 'model_suggestion',
+                severity: 'info',
+                message: `Simple question detected on ${tier.label}. Haiku could handle this at ~5x lower cost.`,
+                dismissible: true,
+            });
+        }
     }
 
     // 2. large_paste: code block with substantial surrounding context.

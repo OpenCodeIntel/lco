@@ -16,10 +16,12 @@ import {
     pruneConversations,
     storeUsageLimits,
     appendUsageDelta,
+    getUsageDeltas,
     todayDateString,
     isoWeekId,
     RETENTION_DAYS,
 } from '../lib/conversation-store';
+import { computeTokenEconomics } from '../lib/token-economics';
 import type { UsageLimitsData } from '../lib/message-types';
 
 /**
@@ -388,6 +390,26 @@ export default defineBackground({
           .catch((err) => {
             console.error('[LCO-ERROR] Failed to store usage limits:', err);
             sendResponse({ ok: false });
+          });
+        return true;
+      }
+
+      // Token economics: content script requests cross-conversation median data
+      // for the Delta Coach and Prompt Agent coaching signals. Reads the delta
+      // log and runs computeTokenEconomics, then converts Maps to plain objects
+      // because Maps do not survive chrome.runtime.sendMessage serialization.
+      if (message.type === 'GET_TOKEN_ECONOMICS') {
+        getUsageDeltas(message.organizationId)
+          .then((deltas) => {
+            const result = computeTokenEconomics(deltas);
+            sendResponse({
+              medianTokensPer1Pct: Object.fromEntries(result.medianTokensPer1Pct),
+              sampleSize: Object.fromEntries(result.sampleSize),
+            });
+          })
+          .catch((err) => {
+            console.error('[LCO-ERROR] Failed to compute token economics:', err);
+            sendResponse(null);
           });
         return true;
       }

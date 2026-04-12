@@ -22,7 +22,8 @@ export interface ConversationState {
 
 export interface ContextSignal {
     type: 'threshold' | 'growth_warning' | 'stale_conversation' | 'project_hint'
-        | 'model_suggestion' | 'large_paste' | 'follow_up_chain';
+        | 'model_suggestion' | 'large_paste' | 'follow_up_chain'
+        | 'burn_rate' | 'expensive_message' | 'cost_trajectory';
     severity: 'info' | 'warning' | 'critical';
     message: string;
     dismissible: boolean;

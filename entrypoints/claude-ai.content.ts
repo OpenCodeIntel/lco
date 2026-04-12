@@ -12,7 +12,9 @@ import { ClaudeAdapter } from '../lib/adapters/claude';
 import { analyzeContext, shouldDismiss, signalKey, pickTopSignal } from '../lib/context-intelligence';
 import type { ConversationState } from '../lib/context-intelligence';
 import { analyzePrompt } from '../lib/prompt-analysis';
-import type { PromptCharacteristics } from '../lib/prompt-analysis';
+import type { PromptCharacteristics, DeltaPromptContext } from '../lib/prompt-analysis';
+import { analyzeDelta } from '../lib/delta-coaching';
+import type { DeltaCoachInput } from '../lib/delta-coaching';
 import { getContextWindowSize, calculateCost } from '../lib/pricing';
 import { extractConversationId } from '../lib/conversation-store';
 import type { ConversationRecord } from '../lib/conversation-store';
@@ -153,6 +155,17 @@ async function initializeMonitoring(): Promise<void> {
     // Null until the first successful usage fetch (ORGANIZATION_DETECTED).
     let lastKnownUtilization: number | null = null;
 
+    // Per-conversation delta history for the Delta Coach Agent.
+    // Accumulates deltaUtilization values (session % per turn) as they arrive.
+    // Reset on SPA navigation alongside other conversation state.
+    let deltaHistory: number[] = [];
+    let firstTurnDelta: number | null = null;
+
+    // Cached token economics (medianTokensPer1Pct as plain object, keyed by model).
+    // Fetched once per org from the background via GET_TOKEN_ECONOMICS.
+    // Cross-conversation: not reset on SPA navigation, only on org change.
+    let cachedTokenEconomics: Record<string, number> | null = null;
+
     // Restore state from stored conversation record if one exists.
     // This gives the overlay correct context % and turn count immediately
     // on page load, instead of showing 0% until the user sends a message.
@@ -226,8 +239,13 @@ async function initializeMonitoring(): Promise<void> {
         // (before any user message). This gives us the account scope immediately.
         if (msg.type === 'ORGANIZATION_DETECTED') {
             const wasNull = currentOrgId === null;
+            const orgChanged = !wasNull && currentOrgId !== msg.organizationId;
             currentOrgId = msg.organizationId;
-            if (wasNull) {
+
+            // Clear stale token economics when org changes (different account).
+            if (orgChanged) cachedTokenEconomics = null;
+
+            if (wasNull || orgChanged) {
                 // Re-send SET_ACTIVE_CONV with the now-known org ID so the
                 // side panel can scope its queries to this account.
                 browser.runtime.sendMessage({
@@ -249,6 +267,16 @@ async function initializeMonitoring(): Promise<void> {
                 fetchAndStoreUsageLimits(currentOrgId).then(u => {
                     if (u !== null) lastKnownUtilization = u;
                 });
+
+                // Pre-fetch token economics for the Delta Coach and Prompt Agent.
+                // Cross-conversation medians are expensive to recompute per turn;
+                // caching them here means they're ready by the first STREAM_COMPLETE.
+                browser.runtime.sendMessage({
+                    type: 'GET_TOKEN_ECONOMICS',
+                    organizationId: currentOrgId,
+                }).then((result: { medianTokensPer1Pct: Record<string, number> } | null) => {
+                    if (result) cachedTokenEconomics = result.medianTokensPer1Pct;
+                }).catch(() => { /* non-critical; delta coaching degrades gracefully */ });
             }
             return; // ORGANIZATION_DETECTED is handled; no further processing.
         }
@@ -370,6 +398,10 @@ async function initializeMonitoring(): Promise<void> {
                 const turnContextPct = state.contextPct ?? 0;
                 const turnCost = calculateCost(msg.inputTokens, msg.outputTokens, msg.model);
                 const turnTopicHint = msg.topicHint;
+                const turnPromptChars = promptChars;
+                const turnFollowUpCount = consecutiveShortFollowUps;
+                const turnConvState = convState;
+                const turnDismissed = dismissed;
 
                 // fetchAndStoreUsageLimits catches all errors internally; it never
                 // throws. The .then() always runs.
@@ -398,6 +430,57 @@ async function initializeMonitoring(): Promise<void> {
                     if (deltaUtilization !== null) {
                         state = { ...state, lastDeltaUtilization: deltaUtilization };
                         overlay.render(state);
+                    }
+
+                    // Track delta history for the Delta Coach Agent.
+                    if (deltaUtilization !== null) {
+                        deltaHistory.push(deltaUtilization);
+                        if (firstTurnDelta === null) firstTurnDelta = deltaUtilization;
+                    }
+
+                    // Second signal pass: re-run agents with delta data.
+                    // The first pass (synchronous, above) ran without delta. Now that
+                    // we have exact session data, the Delta Coach and enhanced Prompt
+                    // Agent can produce data-driven signals that may outrank the initial ones.
+                    const deltaCoachInput: DeltaCoachInput = {
+                        currentDelta: deltaUtilization,
+                        recentDeltas: deltaHistory.slice(-5),
+                        sessionPct: utilizationAfter ?? 0,
+                        firstTurnDelta,
+                        turnCount: turnConvState.turnCount,
+                    };
+                    const deltaSignals = analyzeDelta(deltaCoachInput)
+                        .filter(s => !shouldDismiss(s, turnDismissed));
+
+                    // Build Prompt Agent delta context for model efficiency coaching.
+                    let deltaPromptCtx: DeltaPromptContext | undefined;
+                    if (deltaUtilization !== null && cachedTokenEconomics) {
+                        // Find the Haiku median: try exact key first, then prefix match.
+                        const haikuKey = Object.keys(cachedTokenEconomics)
+                            .find(k => k.startsWith('claude-haiku'));
+                        const haikuMedian = haikuKey ? cachedTokenEconomics[haikuKey] : null;
+                        const totalTokens = turnInputTokens + turnOutputTokens;
+                        const haikuMedianDelta = (haikuMedian && haikuMedian > 0)
+                            ? totalTokens / haikuMedian
+                            : null;
+                        deltaPromptCtx = { currentDelta: deltaUtilization, haikuMedianDelta };
+                    }
+                    const deltaPromptSignals = analyzePrompt(
+                        turnPromptChars, turnModel, turnFollowUpCount, deltaPromptCtx,
+                    ).filter(s => !shouldDismiss(s, turnDismissed));
+
+                    // Merge all delta-powered signals. Context signals from the first
+                    // pass are still valid; merge them in so pickTopSignal can compare.
+                    const contextSignals2 = analyzeContext(turnConvState)
+                        .filter(s => !shouldDismiss(s, turnDismissed));
+                    const allDeltaSignals = [
+                        ...contextSignals2,
+                        ...deltaSignals,
+                        ...deltaPromptSignals,
+                    ];
+                    const deltaNudge = pickTopSignal(allDeltaSignals);
+                    if (deltaNudge) {
+                        overlay.showNudge(deltaNudge, () => { dismissed.add(signalKey(deltaNudge)); });
                     }
 
                     browser.runtime.sendMessage({
@@ -562,6 +645,8 @@ async function initializeMonitoring(): Promise<void> {
             cumulativeOutput = 0;
             cumulativeCost = 0;
             consecutiveShortFollowUps = 0;
+            deltaHistory = [];
+            firstTurnDelta = null;
             dismissed = new Set();
             const thisGeneration = ++navGeneration;
             overlay.render(state);
