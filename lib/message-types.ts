@@ -193,7 +193,8 @@ export type BackgroundMessage =
     | RecordTurnMessage
     | FinalizeConversationMessage
     | GetConversationMessage
-    | SetActiveConvMessage;
+    | SetActiveConvMessage
+    | GetTokenEconomicsMessage;
 
 /** Response returned by the background after STORE_TOKEN_BATCH */
 export interface StoreTokenBatchResponse {
@@ -272,4 +273,19 @@ export interface StoreUsageLimitsMessage {
     fiveHourResetsAt: string;
     sevenDayUtilization: number;
     sevenDayResetsAt: string;
+}
+
+// ── Token Economics Messages ────────────────────────────────────────────────
+
+/**
+ * Sent from the content script to the background to retrieve computed token
+ * economics (median tokens per 1% session, per model). The background reads
+ * the delta log and runs computeTokenEconomics.
+ *
+ * Response: { medianTokensPer1Pct: Record<string, number>, sampleSize: Record<string, number> } | null
+ * Maps are converted to plain objects because Maps do not survive chrome.runtime.sendMessage.
+ */
+export interface GetTokenEconomicsMessage {
+    type: 'GET_TOKEN_ECONOMICS';
+    organizationId: string;
 }
