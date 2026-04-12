@@ -87,8 +87,20 @@ export interface OrganizationDetectedPayload {
     organizationId: string;
 }
 
+/**
+ * Posted from inject.ts at fetch time, just before the stream starts.
+ * Pre-send fallback for the compose box observer: guarantees the content
+ * script gets the draft char count even if the DOM observer failed to attach.
+ */
+export interface DraftEstimatePayload {
+    namespace: typeof LCO_NAMESPACE;
+    type: 'DRAFT_ESTIMATE';
+    token: string;
+    draftCharCount: number;
+}
+
 /** Union of all valid bridge message types */
-export type LcoBridgeMessage = TokenBatchPayload | StreamCompletePayload | StreamHealthBrokenPayload | StreamHealthRecoveredPayload | MessageLimitPayload | OrganizationDetectedPayload;
+export type LcoBridgeMessage = TokenBatchPayload | StreamCompletePayload | StreamHealthBrokenPayload | StreamHealthRecoveredPayload | MessageLimitPayload | OrganizationDetectedPayload | DraftEstimatePayload;
 
 // Tab Storage Schema (chrome.storage.session)
 

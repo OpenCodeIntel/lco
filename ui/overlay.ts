@@ -52,6 +52,10 @@ export function createOverlay(): OverlayHandle {
     let elHealth: HTMLElement | null = null;
     let elCostMini: HTMLElement | null = null;
     let nudgeHideTimer: ReturnType<typeof setTimeout> | null = null;
+    let elDraftRow: HTMLElement | null = null;
+    let elDraftValue: HTMLElement | null = null;
+    let elDraftCompare: HTMLElement | null = null;
+    let elDraftWarning: HTMLElement | null = null;
 
     function mount(shadow: ShadowRoot): void {
         const style = document.createElement('style');
@@ -83,6 +87,35 @@ export function createOverlay(): OverlayHandle {
         // Body — collapsible
         const body = document.createElement('div');
         body.className = 'lco-body';
+
+        // Draft estimate row: pre-submit cost preview (above "this reply")
+        const draftRow = document.createElement('div');
+        draftRow.className = 'lco-draft-row';
+        draftRow.style.display = 'none';
+        elDraftRow = draftRow;
+        const lblDraft = document.createElement('span');
+        lblDraft.className = 'lco-label';
+        lblDraft.textContent = 'draft';
+        const valDraft = document.createElement('span');
+        valDraft.className = 'lco-value';
+        elDraftValue = valDraft;
+        draftRow.appendChild(lblDraft);
+        draftRow.appendChild(valDraft);
+        body.appendChild(draftRow);
+
+        // Draft model comparison (hidden unless cost > 5%)
+        const draftCompare = document.createElement('div');
+        draftCompare.className = 'lco-draft-compare';
+        draftCompare.style.display = 'none';
+        elDraftCompare = draftCompare;
+        body.appendChild(draftCompare);
+
+        // Draft warning (hidden unless projected total >= 90%)
+        const draftWarning = document.createElement('div');
+        draftWarning.className = 'lco-draft-warning';
+        draftWarning.style.display = 'none';
+        elDraftWarning = draftWarning;
+        body.appendChild(draftWarning);
 
         // Last request row
         const rowLast = document.createElement('div');
@@ -233,9 +266,46 @@ export function createOverlay(): OverlayHandle {
     function render(state: OverlayState): void {
         if (!overlayWidget) return;
 
-        // Reveal widget on first data arrival
-        if (state.lastRequest !== null && overlayWidget.style.display === 'none') {
+        // Reveal widget on first data arrival or when draft estimate is available.
+        if ((state.lastRequest !== null || state.draftEstimate !== null) && overlayWidget.style.display === 'none') {
             overlayWidget.style.display = '';
+        }
+
+        // Draft estimate: pre-submit cost preview.
+        if (elDraftRow && elDraftValue) {
+            const draft = state.draftEstimate;
+            if (draft) {
+                elDraftRow.style.display = '';
+                if (draft.estimatedSessionPct !== null) {
+                    elDraftValue.textContent =
+                        `~${fmt(draft.estimatedTokens)} tokens  ~${draft.estimatedSessionPct.toFixed(1)}% of session`;
+                } else {
+                    elDraftValue.textContent = `~${fmt(draft.estimatedTokens)} tokens`;
+                }
+            } else {
+                elDraftRow.style.display = 'none';
+                elDraftValue.textContent = '';
+            }
+        }
+        if (elDraftCompare) {
+            const comparisons = state.draftEstimate?.modelComparisons ?? [];
+            if (comparisons.length > 0) {
+                elDraftCompare.textContent = comparisons
+                    .map(c => `${c.label}: ~${c.estimatedPct.toFixed(1)}%`)
+                    .join('  ');
+                elDraftCompare.style.display = '';
+            } else {
+                elDraftCompare.style.display = 'none';
+            }
+        }
+        if (elDraftWarning) {
+            const warning = state.draftEstimate?.warning ?? null;
+            if (warning) {
+                elDraftWarning.textContent = warning;
+                elDraftWarning.style.display = '';
+            } else {
+                elDraftWarning.style.display = 'none';
+            }
         }
 
         if (elCurrentRequest && state.lastRequest) {

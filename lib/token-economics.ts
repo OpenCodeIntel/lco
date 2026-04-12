@@ -1,14 +1,16 @@
 // lib/token-economics.ts
-// Pure agent: derives median tokens-per-1% of 5-hour session limit, grouped by model.
+// Pure agent: derives median token-to-session-% ratios, grouped by model.
 //
 // Architecture position: lib/ agent layer. Pure functions only — no DOM, no chrome.*, no storage.
 // Input:  UsageDelta[] from getUsageDeltas() in lib/conversation-store.ts
-// Output: TokenEconomicsResult (two Maps keyed by model string)
+// Output: TokenEconomicsResult (three Maps keyed by model string)
 // Called by: entrypoints/sidepanel/hooks/useDashboardData.ts (loadTokenEconomics)
+//            entrypoints/background.ts (GET_TOKEN_ECONOMICS handler)
 //
 // Why this exists: each model consumes session limit at a different rate. Knowing the
-// median tokens-per-1% lets us predict how much session a draft message will cost before
-// the user sends it, and flag conversations that are burning limit faster than expected.
+// median tokens-per-1% lets us flag conversations burning limit faster than expected.
+// Knowing the median session-% per input token lets us predict what a draft message
+// will cost before the user sends it (pre-submit intelligence, LCO-35).
 
 import type { UsageDelta } from './conversation-store';
 
@@ -25,6 +27,14 @@ export interface TokenEconomicsResult {
      * per model. Higher = less efficient per session percentage point.
      */
     medianTokensPer1Pct: Map<string, number>;
+    /**
+     * Median session % consumed per input token, per model.
+     * Derived from: deltaUtilization / inputTokens for each delta record.
+     * This implicitly accounts for the typical response size because
+     * deltaUtilization captures the full round-trip cost (input + output + overhead).
+     * Used by the Pre-Submit Agent (LCO-35) to predict draft cost from char count.
+     */
+    medianPctPerInputToken: Map<string, number>;
     /** Number of delta records used to compute the median for each model. */
     sampleSize: Map<string, number>;
 }
@@ -73,26 +83,44 @@ function median(sorted: number[]): number {
  *          Models below MIN_SAMPLES are absent from both Maps.
  */
 export function computeTokenEconomics(deltas: UsageDelta[]): TokenEconomicsResult {
-    // Group tokensPerPct values by model, excluding zero-delta records.
-    const byModel = new Map<string, number[]>();
+    // Group values by model, excluding zero-delta and zero-input records.
+    const tokensPerPctByModel = new Map<string, number[]>();
+    const pctPerInputByModel = new Map<string, number[]>();
 
     for (const delta of deltas) {
         if (delta.deltaUtilization === 0) continue;
+
         const tokensPerPct = (delta.inputTokens + delta.outputTokens) / delta.deltaUtilization;
-        const bucket = byModel.get(delta.model) ?? [];
-        bucket.push(tokensPerPct);
-        byModel.set(delta.model, bucket);
+        const tppBucket = tokensPerPctByModel.get(delta.model) ?? [];
+        tppBucket.push(tokensPerPct);
+        tokensPerPctByModel.set(delta.model, tppBucket);
+
+        // pctPerInputToken: how much session % does each input token cost?
+        // Skip records with zero input tokens to avoid division by zero.
+        if (delta.inputTokens > 0) {
+            const pctPerInput = delta.deltaUtilization / delta.inputTokens;
+            const ppiBucket = pctPerInputByModel.get(delta.model) ?? [];
+            ppiBucket.push(pctPerInput);
+            pctPerInputByModel.set(delta.model, ppiBucket);
+        }
     }
 
     const medianTokensPer1Pct = new Map<string, number>();
+    const medianPctPerInputToken = new Map<string, number>();
     const sampleSize = new Map<string, number>();
 
-    for (const [model, values] of byModel) {
+    for (const [model, values] of tokensPerPctByModel) {
         if (values.length < MIN_SAMPLES) continue;
         values.sort((a, b) => a - b);
         medianTokensPer1Pct.set(model, median(values));
         sampleSize.set(model, values.length);
     }
 
-    return { medianTokensPer1Pct, sampleSize };
+    for (const [model, values] of pctPerInputByModel) {
+        if (values.length < MIN_SAMPLES) continue;
+        values.sort((a, b) => a - b);
+        medianPctPerInputToken.set(model, median(values));
+    }
+
+    return { medianTokensPer1Pct, medianPctPerInputToken, sampleSize };
 }

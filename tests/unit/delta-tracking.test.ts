@@ -140,3 +140,67 @@ describe('computeTokenEconomics with delta data', () => {
         expect(result.medianTokensPer1Pct.has('claude-sonnet-4-6')).toBe(false);
     });
 });
+
+// ── medianPctPerInputToken ───────────────────────────────────────────────────
+
+describe('medianPctPerInputToken', () => {
+    it('empty for no data', () => {
+        const result = computeTokenEconomics([]);
+        expect(result.medianPctPerInputToken.size).toBe(0);
+    });
+
+    it('below MIN_SAMPLES produces no entry', () => {
+        const deltas: UsageDelta[] = [];
+        for (let i = 0; i < MIN_SAMPLES - 1; i++) {
+            deltas.push(makeDelta('claude-sonnet-4-6', 2, 500, 100));
+        }
+        const result = computeTokenEconomics(deltas);
+        expect(result.medianPctPerInputToken.has('claude-sonnet-4-6')).toBe(false);
+    });
+
+    it('computes median pct per input token correctly', () => {
+        // 5 records: delta=2, input=500 each -> pctPerInput = 2/500 = 0.004
+        const deltas: UsageDelta[] = [];
+        for (let i = 0; i < 5; i++) {
+            deltas.push(makeDelta('claude-sonnet-4-6', 2, 500, 100));
+        }
+        const result = computeTokenEconomics(deltas);
+        expect(result.medianPctPerInputToken.has('claude-sonnet-4-6')).toBe(true);
+        expect(result.medianPctPerInputToken.get('claude-sonnet-4-6')).toBeCloseTo(0.004, 5);
+    });
+
+    it('excludes records with zero input tokens', () => {
+        const deltas: UsageDelta[] = [];
+        // 5 records with zero input tokens (division by zero would crash)
+        for (let i = 0; i < 5; i++) {
+            deltas.push(makeDelta('claude-sonnet-4-6', 2, 0, 100));
+        }
+        const result = computeTokenEconomics(deltas);
+        expect(result.medianPctPerInputToken.has('claude-sonnet-4-6')).toBe(false);
+    });
+
+    it('computes independently per model', () => {
+        const deltas: UsageDelta[] = [];
+        // Sonnet: delta=2, input=500 -> 0.004
+        for (let i = 0; i < 5; i++) {
+            deltas.push(makeDelta('claude-sonnet-4-6', 2, 500, 100));
+        }
+        // Haiku: delta=1, input=500 -> 0.002
+        for (let i = 0; i < 5; i++) {
+            deltas.push(makeDelta('claude-haiku-4-5', 1, 500, 100));
+        }
+        const result = computeTokenEconomics(deltas);
+        expect(result.medianPctPerInputToken.get('claude-sonnet-4-6')).toBeCloseTo(0.004, 5);
+        expect(result.medianPctPerInputToken.get('claude-haiku-4-5')).toBeCloseTo(0.002, 5);
+    });
+
+    it('takes median of varying values', () => {
+        // 5 records with different input sizes: 200, 400, 500, 600, 800
+        // delta=2 for all -> pctPerInput: 0.01, 0.005, 0.004, 0.00333, 0.0025
+        // Sorted: 0.0025, 0.00333, 0.004, 0.005, 0.01 -> median = 0.004
+        const inputs = [200, 400, 500, 600, 800];
+        const deltas = inputs.map(inp => makeDelta('claude-sonnet-4-6', 2, inp, 100));
+        const result = computeTokenEconomics(deltas);
+        expect(result.medianPctPerInputToken.get('claude-sonnet-4-6')).toBeCloseTo(0.004, 5);
+    });
+});

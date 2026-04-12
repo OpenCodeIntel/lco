@@ -395,7 +395,7 @@ export default defineBackground({
       }
 
       // Token economics: content script requests cross-conversation median data
-      // for the Delta Coach and Prompt Agent coaching signals. Reads the delta
+      // for the Delta Coach, Prompt Agent, and Pre-Submit Agent. Reads the delta
       // log and runs computeTokenEconomics, then converts Maps to plain objects
       // because Maps do not survive chrome.runtime.sendMessage serialization.
       if (message.type === 'GET_TOKEN_ECONOMICS') {
@@ -404,6 +404,7 @@ export default defineBackground({
             const result = computeTokenEconomics(deltas);
             sendResponse({
               medianTokensPer1Pct: Object.fromEntries(result.medianTokensPer1Pct),
+              medianPctPerInputToken: Object.fromEntries(result.medianPctPerInputToken),
               sampleSize: Object.fromEntries(result.sampleSize),
             });
           })

@@ -7,6 +7,7 @@ import { calculateCost, getContextWindowSize } from './pricing';
 import type { TabState } from './message-types';
 import type { HealthScore } from './health-score';
 import type { ConversationRecord } from './conversation-store';
+import type { PreSubmitEstimate } from './pre-submit';
 
 export interface OverlayState {
     lastRequest: {
@@ -34,6 +35,12 @@ export interface OverlayState {
      * uncomputable (fetch failure, session reset, first load).
      */
     lastDeltaUtilization: number | null;
+    /**
+     * Pre-submit cost estimate for the current draft in the compose box.
+     * Null when no draft is being composed or draft is below threshold.
+     * Set by the compose box observer or the pre-send fallback in inject.ts.
+     */
+    draftEstimate: PreSubmitEstimate | null;
 }
 
 export const INITIAL_STATE: Readonly<OverlayState> = {
@@ -45,6 +52,7 @@ export const INITIAL_STATE: Readonly<OverlayState> = {
     streaming: false,
     health: null,
     lastDeltaUtilization: null,
+    draftEstimate: null,
 };
 
 
@@ -149,4 +157,14 @@ export function applyRestoredConversation(
         },
         health,
     };
+}
+
+/** Set the pre-submit draft estimate. Called by the compose box observer or pre-send fallback. */
+export function applyDraftEstimate(state: OverlayState, estimate: PreSubmitEstimate | null): OverlayState {
+    return { ...state, draftEstimate: estimate };
+}
+
+/** Clear the draft estimate. Called on TOKEN_BATCH (message sent) and SPA navigation. */
+export function clearDraftEstimate(state: OverlayState): OverlayState {
+    return { ...state, draftEstimate: null };
 }

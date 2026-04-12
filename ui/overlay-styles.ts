@@ -189,6 +189,36 @@ export const OVERLAY_CSS = `
   margin: 5px 0;
 }
 
+/* ── Draft estimate (pre-submit) ── */
+
+.lco-draft-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  opacity: 0.7;
+}
+
+.lco-draft-row .lco-label {
+  font-style: italic;
+}
+
+.lco-draft-compare {
+  font-size: 9px;
+  line-height: 1.3;
+  color: var(--lco-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lco-draft-warning {
+  font-size: 9px;
+  line-height: 1.3;
+  color: var(--lco-warn-fill);
+}
+
 /* ── Health indicator ── */
 
 .lco-health-row {

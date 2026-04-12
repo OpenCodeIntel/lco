@@ -88,7 +88,7 @@ export default defineUnlistedScript(() => {
         // Messages are batched every 200ms to avoid saturating the bridge.
         // Never uses '*' as targetOrigin; always scoped to the current origin.
         function postSecureBatch(payload: {
-            type: 'TOKEN_BATCH' | 'STREAM_COMPLETE' | 'HEALTH_BROKEN' | 'HEALTH_RECOVERED' | 'MESSAGE_LIMIT_UPDATE' | 'ORGANIZATION_DETECTED';
+            type: 'TOKEN_BATCH' | 'STREAM_COMPLETE' | 'HEALTH_BROKEN' | 'HEALTH_RECOVERED' | 'MESSAGE_LIMIT_UPDATE' | 'ORGANIZATION_DETECTED' | 'DRAFT_ESTIMATE';
             inputTokens?: number;
             outputTokens?: number;
             model?: string;
@@ -102,6 +102,7 @@ export default defineUnlistedScript(() => {
             hasCodeBlock?: boolean;
             isShortFollowUp?: boolean;
             organizationId?: string;
+            draftCharCount?: number;
         }) {
             window.postMessage(
                 {
@@ -518,6 +519,17 @@ export default defineUnlistedScript(() => {
                 const { model, prompt } = extractModelAndPromptFromInit(init);
                 const organizationId = extractOrgId(url);
                 console.log(`[LCO] Intercepted completion request: ${url.slice(-80)} | model: ${model}`);
+
+                // Pre-send fallback: post the draft char count right before the
+                // request fires. This guarantees the content script gets a cost
+                // estimate even if the compose box DOM observer failed to attach
+                // (e.g., claude.ai changed their DOM structure).
+                if (prompt.length > 0) {
+                    postSecureBatch({
+                        type: 'DRAFT_ESTIMATE',
+                        draftCharCount: prompt.length,
+                    });
+                }
 
                 const response = await nativeFetch.call(this, input, init);
 

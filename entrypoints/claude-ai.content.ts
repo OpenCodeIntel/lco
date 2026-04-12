@@ -5,7 +5,8 @@
 import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage, SetActiveConvMessage, StoreUsageLimitsMessage } from '../lib/message-types';
 import { LCO_NAMESPACE } from '../lib/message-types';
 import { isValidBridgeSchema } from '../lib/bridge-validation';
-import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation } from '../lib/overlay-state';
+import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation, applyDraftEstimate, clearDraftEstimate } from '../lib/overlay-state';
+import { computePreSubmitEstimate } from '../lib/pre-submit';
 import { createOverlay } from '../ui/overlay';
 import { showEnableBanner } from '../ui/enable-banner';
 import { ClaudeAdapter } from '../lib/adapters/claude';
@@ -166,6 +167,15 @@ async function initializeMonitoring(): Promise<void> {
     // Cross-conversation: not reset on SPA navigation, only on org change.
     let cachedTokenEconomics: Record<string, number> | null = null;
 
+    // Cached medianPctPerInputToken: session % per input token, per model.
+    // Used by the Pre-Submit Agent to predict draft cost from char count.
+    let cachedPctPerInputToken: Record<string, number> | null = null;
+
+    // Compose box observer for pre-submit cost estimation.
+    let composeBoxRef: HTMLElement | null = null;
+    let composeObserver: MutationObserver | null = null;
+    let draftDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
     // Restore state from stored conversation record if one exists.
     // This gives the overlay correct context % and turn count immediately
     // on page load, instead of showing 0% until the user sends a message.
@@ -243,7 +253,10 @@ async function initializeMonitoring(): Promise<void> {
             currentOrgId = msg.organizationId;
 
             // Clear stale token economics when org changes (different account).
-            if (orgChanged) cachedTokenEconomics = null;
+            if (orgChanged) {
+                cachedTokenEconomics = null;
+                cachedPctPerInputToken = null;
+            }
 
             if (wasNull || orgChanged) {
                 // Re-send SET_ACTIVE_CONV with the now-known org ID so the
@@ -274,9 +287,12 @@ async function initializeMonitoring(): Promise<void> {
                 browser.runtime.sendMessage({
                     type: 'GET_TOKEN_ECONOMICS',
                     organizationId: currentOrgId,
-                }).then((result: { medianTokensPer1Pct: Record<string, number> } | null) => {
-                    if (result) cachedTokenEconomics = result.medianTokensPer1Pct;
-                }).catch(() => { /* non-critical; delta coaching degrades gracefully */ });
+                }).then((result: { medianTokensPer1Pct: Record<string, number>; medianPctPerInputToken: Record<string, number> } | null) => {
+                    if (result) {
+                        cachedTokenEconomics = result.medianTokensPer1Pct;
+                        cachedPctPerInputToken = result.medianPctPerInputToken;
+                    }
+                }).catch(() => { /* non-critical; coaching and pre-submit degrade gracefully */ });
             }
             return; // ORGANIZATION_DETECTED is handled; no further processing.
         }
@@ -295,7 +311,22 @@ async function initializeMonitoring(): Promise<void> {
             }
         }
 
+        // Pre-send fallback: inject.ts posts DRAFT_ESTIMATE right before the fetch.
+        // This guarantees a cost estimate even if the compose box observer is disconnected.
+        if (msg.type === 'DRAFT_ESTIMATE') {
+            const estimate = computePreSubmitEstimate({
+                draftCharCount: msg.draftCharCount,
+                model: convState.model || 'claude-sonnet-4-6',
+                pctPerInputToken: cachedPctPerInputToken,
+                currentSessionPct: lastKnownUtilization ?? 0,
+            });
+            state = applyDraftEstimate(state, estimate);
+            overlay.render(state);
+        }
+
         if (msg.type === 'TOKEN_BATCH') {
+            // Clear draft estimate: the message has been sent, stream is starting.
+            state = clearDraftEstimate(state);
             browser.runtime.sendMessage({
                 type: 'STORE_TOKEN_BATCH',
                 platform: msg.platform,
@@ -612,6 +643,132 @@ async function initializeMonitoring(): Promise<void> {
         }
     });
 
+    // ── Compose box observer for pre-submit cost estimation ────────────────
+    //
+    // Claude.ai uses ProseMirror with a contenteditable div. The content script
+    // finds it via CSS selectors, attaches an input listener (debounced 500ms),
+    // and calls the Pre-Submit Agent on each update. A MutationObserver on
+    // document.body handles the SPA's dynamic DOM: the compose box may not exist
+    // at document_start and is replaced on navigation.
+
+    function findComposeBox(): HTMLElement | null {
+        return document.querySelector<HTMLElement>('div.ProseMirror[contenteditable="true"]')
+            ?? document.querySelector<HTMLElement>('div[contenteditable="true"][data-placeholder]')
+            ?? null;
+    }
+
+    /**
+     * Read the total draft content: typed text + any pasted/attached content.
+     *
+     * Claude.ai shows large pastes as attachment cards above the compose box,
+     * outside the contenteditable. Reading only the contenteditable misses
+     * the bulk of the content. This function walks up to the compose area's
+     * parent container (the form or fieldset wrapping both the attachment cards
+     * and the editor) and reads all textContent from there.
+     *
+     * Falls back to the contenteditable text alone if no suitable parent is found.
+     */
+    function readComposeAreaText(box: HTMLElement): string {
+        // Walk up from the contenteditable to find the form container that
+        // holds both attachment cards and the editor. Claude.ai wraps the
+        // compose area in a <fieldset> or <form> element.
+        let parent: HTMLElement | null = box.parentElement;
+        for (let i = 0; i < 5 && parent; i++) {
+            const tag = parent.tagName.toLowerCase();
+            if (tag === 'fieldset' || tag === 'form') {
+                return parent.textContent ?? '';
+            }
+            parent = parent.parentElement;
+        }
+
+        // Fallback: just the contenteditable text.
+        return box.textContent ?? '';
+    }
+
+    /** Run the pre-submit estimate for the current compose area content. */
+    function updateDraftEstimate(box: HTMLElement): void {
+        const text = readComposeAreaText(box);
+
+        if (text.length < 20) {
+            if (draftDebounceTimer) { clearTimeout(draftDebounceTimer); draftDebounceTimer = null; }
+            if (state.draftEstimate !== null) {
+                state = clearDraftEstimate(state);
+                overlay.render(state);
+            }
+            return;
+        }
+
+        if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
+        draftDebounceTimer = setTimeout(() => {
+            const estimate = computePreSubmitEstimate({
+                draftCharCount: text.length,
+                model: convState.model || 'claude-sonnet-4-6',
+                pctPerInputToken: cachedPctPerInputToken,
+                currentSessionPct: lastKnownUtilization ?? 0,
+            });
+            state = applyDraftEstimate(state, estimate);
+            overlay.render(state);
+        }, 500);
+    }
+
+    function attachComposeListener(box: HTMLElement): void {
+        composeBoxRef = box;
+
+        // Listen for typed text changes in the contenteditable.
+        box.addEventListener('input', () => { updateDraftEstimate(box); });
+
+        // Also observe the compose area parent for attachment card changes.
+        // When the user pastes a large block, Claude.ai shows it as a card
+        // above the editor (outside the contenteditable). The input event on
+        // the editor does not fire for these; we need a MutationObserver on
+        // the parent container.
+        let attachmentParent: HTMLElement | null = box.parentElement;
+        for (let i = 0; i < 5 && attachmentParent; i++) {
+            const tag = attachmentParent.tagName.toLowerCase();
+            if (tag === 'fieldset' || tag === 'form') break;
+            attachmentParent = attachmentParent.parentElement;
+        }
+        if (attachmentParent && attachmentParent !== box) {
+            const attachmentObserver = new MutationObserver(() => { updateDraftEstimate(box); });
+            attachmentObserver.observe(attachmentParent, { childList: true, subtree: true });
+        }
+    }
+
+    function startComposeBoxDiscovery(): void {
+        // Check if compose box already exists (fast path for initial load).
+        const existing = findComposeBox();
+        if (existing) {
+            attachComposeListener(existing);
+            return;
+        }
+
+        // Watch for the compose box to appear (SPA loads content dynamically).
+        composeObserver = new MutationObserver(() => {
+            const box = findComposeBox();
+            if (box) {
+                composeObserver?.disconnect();
+                composeObserver = null;
+                attachComposeListener(box);
+            }
+        });
+        composeObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function stopComposeBoxDiscovery(): void {
+        if (composeObserver) {
+            composeObserver.disconnect();
+            composeObserver = null;
+        }
+        composeBoxRef = null;
+        if (draftDebounceTimer) {
+            clearTimeout(draftDebounceTimer);
+            draftDebounceTimer = null;
+        }
+    }
+
+    // Start discovering the compose box once the DOM is ready.
+    startComposeBoxDiscovery();
+
     // Reset overlay, conversation state, and dismissed nudges on SPA navigation (Chrome 102+).
     // Also finalize the previous conversation and detect the new one.
     if ('navigation' in window) {
@@ -651,6 +808,10 @@ async function initializeMonitoring(): Promise<void> {
             const thisGeneration = ++navGeneration;
             overlay.render(state);
             overlay.hideNudge();
+
+            // Re-discover the compose box: SPA navigation replaces the DOM.
+            stopComposeBoxDiscovery();
+            startComposeBoxDiscovery();
 
             // Restore state from storage for the new conversation (if previously tracked).
             // The generation guard prevents this callback from overwriting state if the
