@@ -9,8 +9,12 @@ test.describe('Service Worker Lifecycle', () => {
         expect(sw.length).toBeGreaterThan(0);
     });
 
-    test('stream works after service worker restart', async ({ context, mockPage }) => {
-        // First: verify a stream works normally
+    test('second stream completes after first: worker stays alive between requests', async ({ context, mockPage }) => {
+        // Playwright has no API to force-stop an extension service worker.
+        // What this test validates: the worker is still active and functional
+        // after handling a complete stream, and a second stream succeeds without
+        // needing a worker restart. This catches regressions where the worker
+        // crashes or enters a bad state after the first message channel closes.
         const firstRun: string[] = [];
         mockPage.on('console', (msg) => {
             if (msg.text().includes('[Complete]')) firstRun.push(msg.text());
@@ -22,21 +26,12 @@ test.describe('Service Worker Lifecycle', () => {
 
         expect(firstRun.length).toBeGreaterThan(0);
 
-        // Force-stop the service worker via CDP
+        // Confirm worker is still registered after the first stream.
         const sw = context.serviceWorkers();
-        if (sw.length > 0) {
-            // Navigate to the extensions page to force a worker stop/restart cycle.
-            // Playwright does not have direct CDP access to stop service workers,
-            // but we can evaluate in the background context to simulate idle timeout.
-            // Alternatively, we just verify the worker exists and test resilience
-            // by triggering another stream.
-            const swUrl = sw[0].url();
-            expect(swUrl).toContain('background.js');
-        }
+        expect(sw.length).toBeGreaterThan(0);
+        expect(sw[0].url()).toContain('background.js');
 
-        // Second stream: should still work even if the worker was briefly idle
         const secondRun: string[] = [];
-        // Remove old listener and add new
         mockPage.removeAllListeners('console');
         mockPage.on('console', (msg) => {
             if (msg.text().includes('[Complete]')) secondRun.push(msg.text());

@@ -140,9 +140,6 @@ const TEST_PAGE_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// Serve a page at /chat/{uuid} to match SPA-style navigation
-const CHAT_PAGE_HTML = TEST_PAGE_HTML;
-
 const server = https.createServer({ cert, key }, (req, res) => {
     const url = new URL(req.url ?? '/', `https://${req.headers.host}`);
     const pathname = url.pathname;
@@ -213,7 +210,7 @@ const server = https.createServer({ cert, key }, (req, res) => {
     // Serve the test page at various paths the extension might encounter
     if (pathname === '/' || pathname.startsWith('/chat/') || pathname === '/new') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(CHAT_PAGE_HTML);
+        res.end(TEST_PAGE_HTML);
         return;
     }
 
