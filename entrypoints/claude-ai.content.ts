@@ -103,19 +103,25 @@ async function fetchAndStoreUsageLimits(orgId: string): Promise<number | null> {
 
 /**
  * Build local conversation state from a stored record.
- * Uses the contextPct computed by applyRestoredConversation (cumulative tokens)
- * to backfill contextHistory, since per-turn values stored before cumulative
- * tracking are near-zero and produce meaningless growth rate data.
+ * Uses per-turn contextPct values from TurnRecord when available — these are
+ * the real context window fill percentages recorded at each turn end.
+ * Falls back to a flat backfill with the provided contextPct for older records
+ * that predate per-turn tracking (turns array empty or all zeros).
  */
 function buildConvStateFromRecord(record: ConversationRecord, contextPct: number): ConversationState {
+    const hasMeaningfulTurnData = record.turns.length > 0 &&
+        record.turns.some(t => t.contextPct > 0);
+
+    const lastContextPct = hasMeaningfulTurnData
+        ? record.turns[record.turns.length - 1].contextPct
+        : contextPct;
+
     return {
         turnCount: record.turnCount,
-        contextPct,
-        // Backfill history with the current cumulative value for all turns.
-        // Stored per-turn values are near-zero (pre-cumulative tracking).
-        // A flat history produces a zero growth rate, which is correct:
-        // we have no real per-turn data to compute growth from.
-        contextHistory: record.turns.map(() => contextPct),
+        contextPct: lastContextPct,
+        contextHistory: hasMeaningfulTurnData
+            ? record.turns.map(t => t.contextPct)
+            : record.turns.map(() => contextPct),
         model: record.model,
         contextWindow: getContextWindowSize(record.model) || 200000,
     };
@@ -343,21 +349,31 @@ async function initializeMonitoring(): Promise<void> {
         }
 
         if (msg.type === 'STREAM_COMPLETE') {
-            // Update cumulative totals for this conversation.
+            // Update cumulative session totals for cost and token accounting.
+            // cumulativeInput accumulates real per-turn API input counts (which now
+            // include conversation history) — used for session totals display and cost.
             cumulativeInput += msg.inputTokens;
             cumulativeOutput += msg.outputTokens;
             cumulativeCost += calculateCost(msg.inputTokens, msg.outputTokens, msg.model) ?? 0;
 
             const ctxWindow = getContextWindowSize(msg.model) || 200000;
-            const cumulativeContextPct = ctxWindow > 0
-                ? ((cumulativeInput + cumulativeOutput) / ctxWindow) * 100
+
+            // Context window fill is the current turn's inputTokens divided by the
+            // context window size. With inject.ts now reading the exact input_tokens
+            // from the message_start SSE event, msg.inputTokens represents the full
+            // context Claude received: system prompt + entire conversation history +
+            // current user message. This is the real context window utilization.
+            // It grows turn-over-turn as the conversation history accumulates —
+            // reflecting the exponential growth that drives hallucination and cost.
+            const currentContextPct = ctxWindow > 0
+                ? (msg.inputTokens / ctxWindow) * 100
                 : 0;
 
             // Update conversation state before computing health (health depends on turnCount).
             convState = {
                 turnCount: convState.turnCount + 1,
-                contextPct: cumulativeContextPct,
-                contextHistory: [...convState.contextHistory, cumulativeContextPct],
+                contextPct: currentContextPct,
+                contextHistory: [...convState.contextHistory, currentContextPct],
                 model: msg.model,
                 contextWindow: ctxWindow,
             };
@@ -365,7 +381,7 @@ async function initializeMonitoring(): Promise<void> {
             // Compute full next state in one step, render once.
             state = {
                 ...applyStreamComplete(state, msg),
-                contextPct: cumulativeContextPct,
+                contextPct: currentContextPct,
                 session: {
                     requestCount: convState.turnCount,
                     totalInputTokens: cumulativeInput,
@@ -373,7 +389,7 @@ async function initializeMonitoring(): Promise<void> {
                     totalCost: cumulativeCost,
                 },
                 health: computeHealthScore({
-                    contextPct: cumulativeContextPct,
+                    contextPct: currentContextPct,
                     turnCount: convState.turnCount,
                     growthRate: computeGrowthRate(convState.contextHistory),
                 }),
