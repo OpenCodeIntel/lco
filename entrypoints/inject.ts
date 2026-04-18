@@ -30,6 +30,8 @@ export default defineUnlistedScript(() => {
                 contentDeltaType: string;
                 contentDeltaTypeValue: string;
                 contentDeltaText: string;
+                // mirrors contextInputTokens in lib/adapters/types.ts
+                contextInputTokens?: string;
             };
             body: {
                 model: string;
@@ -162,7 +164,7 @@ export default defineUnlistedScript(() => {
             evt: any,
             config: InjectConfig,
             health: HealthState,
-            summary: { inputTokens: number; outputTokens: number; model: string },
+            summary: { inputTokens: number; outputTokens: number; model: string; hasRealInputTokens: boolean },
             promptText: string,
         ) {
             const { events, paths } = config;
@@ -170,12 +172,24 @@ export default defineUnlistedScript(() => {
 
             if (type === events.streamStart) {
                 health.sawMessageStart = true;
-                // Use chars/4 as a fast synchronous estimate for real-time batch flushes.
-                // Accurate BPE counts are computed once in the finally block.
-                if (promptText) {
-                    summary.inputTokens = Math.round(promptText.length / 4);
+
+                // Prefer the exact input_tokens from the SSE stream over any estimate.
+                // message_start carries message.usage.input_tokens, which equals the full
+                // context Claude received: system prompt + entire conversation history +
+                // current user message. This is the real context window consumption.
+                // Fall back to chars/4 only when the field is absent (e.g. future providers).
+                const realInputTokens = paths.contextInputTokens
+                    ? getPath(evt, paths.contextInputTokens)
+                    : undefined;
+
+                if (typeof realInputTokens === 'number' && realInputTokens > 0) {
+                    summary.inputTokens = realInputTokens;
+                    summary.hasRealInputTokens = true;
+                    console.log(`[LCO] ${events.streamStart} : input: ${realInputTokens} tokens (exact from SSE)`);
+                } else {
+                    summary.inputTokens = promptText ? Math.round(promptText.length / 4) : 0;
+                    console.log(`[LCO] ${events.streamStart} : input: ~${summary.inputTokens} tokens (chars/4 estimate)`);
                 }
-                console.log(`[LCO] ${events.streamStart} : input: ~${summary.inputTokens} tokens (chars/4 estimate)`);
             }
 
             if (type === events.messageLimit) {
@@ -234,6 +248,9 @@ export default defineUnlistedScript(() => {
                 inputTokens: 0,
                 outputTokens: 0,
                 model: requestModel,
+                // Set to true when message_start yields an exact input_tokens value from the
+                // SSE stream. Guards the finally block from overwriting it with a chars/4 estimate.
+                hasRealInputTokens: false,
             };
 
             // Accumulates all output text synchronously; BPE counted once on stream end.
@@ -367,12 +384,15 @@ export default defineUnlistedScript(() => {
                 reader.releaseLock();
 
                 // Compute accurate BPE counts once on the full accumulated text.
-                // Both calls run in parallel; fall back to the chars/4 estimate on failure.
-                const [inputCount, outputCount] = await Promise.all([
-                    countTokens(promptText),
-                    countTokens(outputTextBuffer),
-                ]);
-                if (inputCount > 0) summary.inputTokens = inputCount;
+                // Input: skip if we already have the exact value from the SSE stream's
+                // message_start event — that value is more accurate than counting only
+                // the user's typed message, which misses conversation history tokens.
+                // Output: always count from the accumulated buffer.
+                const outputCount = await countTokens(outputTextBuffer);
+                if (!summary.hasRealInputTokens) {
+                    const inputCount = await countTokens(promptText);
+                    if (inputCount > 0) summary.inputTokens = inputCount;
+                }
                 if (outputCount > 0) summary.outputTokens = outputCount;
 
                 // Extract topic hint from the user's prompt for Conversation DNA.
