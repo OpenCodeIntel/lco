@@ -14,7 +14,7 @@ import {
     type HealthInput,
 } from '../../lib/health-score';
 
-// ── computeHealthScore: Rule 1 (context >= 80% = critical) ─────────────────
+// ── computeHealthScore: Rule 1 (context >= DEGRADING_CEIL = 90% = critical) ──
 
 describe('computeHealthScore: Rule 1 (high context = critical)', () => {
     test('exactly at DEGRADING_CEIL (90%) is critical', () => {

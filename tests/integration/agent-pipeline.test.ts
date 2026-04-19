@@ -201,7 +201,7 @@ describe('agent pipeline: critical conversation', () => {
     });
 
     it('health agent returns critical', () => {
-        // contextPct(85) >= DEGRADING_CEIL(80)
+        // contextPct(85) < DEGRADING_CEIL(90) but >= HEALTHY_CEIL(70) && turnCount(25) > TURN_DEGRADING_CEIL(20): Rule 2
         expect(health.level).toBe('critical');
     });
 

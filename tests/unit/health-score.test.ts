@@ -95,21 +95,15 @@ describe('degrading health', () => {
     });
 
     it('uses singular "message" when only 1 message remaining', () => {
+        // contextPct=80, growthRate=15: (100-80)/15 = 1.33, rounds to 1 → "~1 message"
+        // Rule 4 fires: growthRate(15) > FAST_GROWTH_PCT(8) && contextPct(80) > 30
         const h = computeHealthScore(input({
-            contextPct: 90,
+            contextPct: 80,
             turnCount: 3,
-            growthRate: 12,
+            growthRate: 15,
         }));
-        // contextPct >= 90 triggers Critical (Rule 1), not this rule
-        // Use a case where contextPct is between 30-90
-        const h2 = computeHealthScore(input({
-            contextPct: 79,
-            turnCount: 3,
-            growthRate: 50, // (100-79)/50 = 0.42, rounds to 0
-        }));
-        if (h2.level === 'degrading') {
-            expect(h2.coaching).toMatch(/~0 messages/);
-        }
+        expect(h.level).toBe('degrading');
+        expect(h.coaching).toMatch(/~1 message until context limit/);
     });
 });
 

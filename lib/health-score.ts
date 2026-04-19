@@ -51,7 +51,7 @@ export interface HealthInput {
  * Compute the conversation health score.
  *
  * The score combines context utilization, turn count, and growth rate.
- * A conversation can be Critical from context alone (>80%) or from
+ * A conversation can be Critical from context alone (>= DEGRADING_CEIL, 90%) or from
  * a combination of moderate context + high turn count (the "attention
  * valley" effect from context rot research).
  */
@@ -69,8 +69,8 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     }
 
     // Rule 2: High context + many turns = Critical.
-    // The "attention valley": past 20 turns with >50% context, Claude's attention
-    // to mid-conversation details degrades measurably.
+    // The "attention valley": past TURN_DEGRADING_CEIL turns with >= HEALTHY_CEIL (70%) context,
+    // Claude's attention to mid-conversation details degrades measurably.
     if (contextPct >= HEALTHY_CEIL && turnCount > TURN_DEGRADING_CEIL) {
         return {
             level: 'critical',
