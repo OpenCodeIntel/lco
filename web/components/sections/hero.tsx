@@ -13,7 +13,7 @@ export default function Hero() {
           {/* Left: headline + CTAs */}
           <div>
             <p className="text-saar-muted text-xs font-mono tracking-widest uppercase mb-8">
-              AI Usage Coach
+              For Claude.ai
             </p>
 
             <h1 className="font-serif text-5xl lg:text-6xl xl:text-7xl leading-[1.08] text-saar-text mb-8">
@@ -23,7 +23,7 @@ export default function Hero() {
 
             <p className="text-saar-secondary text-lg leading-relaxed mb-10 max-w-md">
               Saar sits beside your Claude conversations and tells you when to
-              start fresh. Free on Chrome. MCP and Desktop, 2026.
+              start fresh. Free on Chrome. MCP and Desktop coming in 2026.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3">
@@ -34,13 +34,13 @@ export default function Hero() {
                 className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-lg bg-saar-accent text-white font-medium hover:bg-saar-accent/90 transition-colors"
               >
                 <Chrome width={18} height={18} />
-                Add to Chrome — it&apos;s free
+                Add to Chrome &middot; free
               </a>
               <Link
                 href="/why"
                 className="inline-flex items-center justify-center px-5 py-3 rounded-lg border border-saar-border text-saar-secondary hover:text-saar-text hover:border-saar-secondary transition-colors"
               >
-                Why we built this
+                Why Saar
               </Link>
             </div>
 

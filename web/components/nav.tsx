@@ -11,7 +11,6 @@ export default function Nav() {
         <span className="font-mono text-xs tracking-[0.2em] uppercase text-saar-accent font-semibold">
           S A A R
         </span>
-        <span className="text-saar-muted text-xs">AI Usage Coach</span>
       </Link>
 
       <div className="flex items-center gap-6">
