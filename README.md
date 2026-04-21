@@ -2,7 +2,7 @@
 
 Anthropic earns more when you burn more tokens. Their docs won't tell you when to start a new chat. Their dashboard won't show you context rot happening in real time.
 
-lco intercepts Claude's API stream before the UI strips it, counts tokens locally with Anthropic's own BPE vocabulary, and shows you exactly what each message costs.
+Saar built lco to fix that. It intercepts Claude's API stream before the UI strips it, counts tokens locally with Anthropic's own BPE vocabulary, and shows you exactly what each message costs.
 
 ---
 
@@ -37,15 +37,15 @@ April invoice: $189.42
 "I thought I was being careful." - every developer, every month
 ```
 
-lco tells you.
+Saar tells you.
 
 ---
 
 ## How it works
 
-Chrome MV3 forces three isolated JavaScript contexts. lco uses that structure instead of fighting it.
+Chrome MV3 forces three isolated JavaScript contexts. Saar uses that structure instead of fighting it.
 
-![lco architecture: three isolated JavaScript contexts connected by validated message passing](.github/assets/architecture.svg)
+![lco architecture: three isolated JavaScript contexts connected by validated message passing](.github/assets/Architecture.svg)
 
 > **Diagram source:** [.github/assets/architecture.excalidraw](.github/assets/architecture.excalidraw)
 
