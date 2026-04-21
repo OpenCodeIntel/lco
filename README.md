@@ -1,31 +1,12 @@
-# lco — Local Context Optimizer
+# lco
 
-**Claude strips token counts from its web UI. You're flying blind on cost and context.**
-lco intercepts the SSE stream before that data disappears, counts tokens locally with Anthropic's own BPE vocabulary, and renders what you're spending in a live overlay — zero data leaves your machine.
+Anthropic earns more when you burn more tokens. Their docs won't tell you when to start a new chat. Their dashboard won't show you context rot happening in real time.
 
----
-
-## The problem
-
-Every Claude request fires an SSE stream. That stream contains your token counts, stop reasons, and usage cap data. Claude's web UI discards all of it before rendering.
-
-The result: you have no idea how fast you're burning through context, how much each conversation costs, or when you're about to hit your message limit.
-
-Here's what a semester of heavy Claude usage looks like with no visibility:
-
-```
-March invoice: $247.83
-April invoice: $189.42
-"I thought I was being careful." — every developer, every month
-```
-
-The pattern that kills budgets: context accumulation. You start a conversation, paste in a codebase, iterate for two hours. By the end, you're sending 40,000 tokens of context per message — and you never knew.
+lco intercepts Claude's API stream before the UI strips it, counts tokens locally with Anthropic's own BPE vocabulary, and shows you exactly what each message costs.
 
 ---
 
-## What lco does
-
-Installs as a Chrome extension. Runs entirely locally. Intercepts Claude's completion API stream before the UI strips the data. Counts tokens using the same BPE model Claude uses. Shows you what's happening in real time.
+## The overlay
 
 ```
 ┌─ LCO ──────────────────────────────────┐
@@ -36,47 +17,48 @@ Installs as a Chrome extension. Runs entirely locally. Intercepts Claude's compl
 └─────────────────────────────────────────┘
 ```
 
-What you get:
+- **Live token counts:** input and output, every 200ms as Claude responds
+- **Per-request cost:** BPE counts at stream end, not estimated
+- **Context window bar:** how much of the 200K window this conversation has consumed
+- **Session totals:** cumulative cost and request count for the tab
+- **Message limit bar:** fills amber as you approach Claude's usage cap, pulled from the API directly
 
-- **Live token counts** — input and output update every 200ms as Claude responds
-- **Per-request cost** — calculated at stream end with accurate BPE counts
-- **Context window bar** — how much of the 200K window this conversation uses
-- **Session totals** — cumulative cost and request count for the tab
-- **Message limit bar** — fills amber as you approach Claude's usage cap (exact, from the API itself)
+---
+
+## Context rot
+
+You open a conversation. Paste in a file. Ask a follow-up, then another. Two hours later you're sending 40,000 tokens of context per message. Claude's giving you worse answers because the useful signal is buried under noise.
+
+Nobody told you this was happening.
+
+```
+March invoice: $247.83
+April invoice: $189.42
+"I thought I was being careful." - every developer, every month
+```
+
+lco tells you.
 
 ---
 
 ## How it works
 
-Three isolated JavaScript contexts. One validated message bus. One overlay.
+Chrome MV3 forces three isolated JavaScript contexts. lco uses that structure instead of fighting it.
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  Room 1: MAIN World  (inject.ts)                                 │
-│  Intercepts window.fetch. Tees the SSE stream with .tee().       │
-│  Decodes events every 200ms. Posts batches via postMessage.      │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │ postMessage (namespace + session token)
-┌────────────────────────▼─────────────────────────────────────────┐
-│  Room 2: Content Script  (claude-ai.content.ts)                  │
-│  5-layer validation on every message. Forwards to Room 3.        │
-│  Renders the overlay in a closed Shadow DOM.                     │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │ chrome.runtime.sendMessage
-┌────────────────────────▼─────────────────────────────────────────┐
-│  Room 3: Service Worker  (background.ts)                         │
-│  Runs js-tiktoken with Anthropic's BPE vocab (claude.json).      │
-│  Writes per-tab state to chrome.storage.session.                 │
-│  Computes cost. Cleans up storage on tab close.                  │
-└──────────────────────────────────────────────────────────────────┘
-```
+![lco architecture: three isolated JavaScript contexts connected by validated message passing](.github/assets/architecture.svg)
 
-**Why three contexts?** Chrome Extensions MV3 enforces this separation. The page's JS runs in the MAIN world — the extension cannot reach it directly. The content script runs alongside the page but cannot use `chrome.*` APIs. The service worker has full `chrome.*` access but no DOM. Data flows one-way through validated channels.
+> **Diagram source:** [.github/assets/architecture.excalidraw](.github/assets/architecture.excalidraw)
+
+**Room 1: MAIN World** (`inject.ts`): Intercepts `window.fetch`. Tees the SSE stream so Claude's UI gets an identical copy and never knows we were here. Decodes events and posts batches every 200ms.
+
+**Room 2: Content Script** (`claude-ai.content.ts`): Five-layer validation on every postMessage. Renders the overlay in a closed Shadow DOM.
+
+**Room 3: Service Worker** (`background.ts`): Runs js-tiktoken with Anthropic's BPE vocab. Writes per-tab state to `chrome.storage.session`. Computes cost.
 
 ### The fetch intercept
 
 ```javascript
-// inject.ts — runs inside claude.ai's page context
+// inject.ts: runs inside claude.ai's page context
 const originalFetch = window.fetch;
 
 window.fetch = async function (input, init) {
@@ -86,8 +68,7 @@ window.fetch = async function (input, init) {
     const response = await originalFetch.call(this, input, init);
 
     if (response.body) {
-      // .tee() duplicates the stream — one for Claude's UI, one for lco.
-      // Claude's page gets an identical stream and never knows we were here.
+      // .tee() splits the stream: one copy for Claude's UI, one for lco.
       const [pageStream, monitorStream] = response.body.tee();
       decodeSSEStream(monitorStream, model, prompt);
       return new Response(pageStream, response);
@@ -103,53 +84,42 @@ window.fetch = async function (input, init) {
 Every `postMessage` from Room 1 passes five checks before Room 2 forwards anything:
 
 ```typescript
-// 1. Origin must be claude.ai — blocks messages from other pages
-if (event.origin !== 'https://claude.ai') return;
-
-// 2. Source must be the same window — blocks cross-frame injection
-if (event.source !== window) return;
-
-// 3. Namespace must match — LCO_V1 is the shared contract
-if (event.data?.namespace !== 'LCO_V1') return;
-
-// 4. Session token must match — fresh UUID v4 generated per page load
-if (event.data.token !== sessionToken) return;
-
-// 5. Schema validation — correct type, required fields, correct value types
-if (!isValidBridgeSchema(event.data)) return;
+if (event.origin !== 'https://claude.ai') return;  // 1. origin
+if (event.source !== window) return;                // 2. source
+if (event.data?.namespace !== 'LCO_V1') return;    // 3. namespace
+if (event.data.token !== sessionToken) return;      // 4. session token (UUID v4 per load)
+if (!isValidBridgeSchema(event.data)) return;       // 5. schema
 ```
 
-All five must pass or the message is silently dropped. This isn't paranoia — content scripts process every `postMessage` from the page, and pages can post arbitrary data.
+All five must pass or the message is silently dropped. Content scripts process every `postMessage` from the page. Pages can post arbitrary data.
 
 ### Token counting
 
-During streaming, lco uses `chars / 4` for real-time display (fast, synchronous, approximate). When the stream ends, it fires accurate BPE counts:
+Real-time display uses `chars / 4`: fast, synchronous, close enough for the overlay. At stream end, accurate BPE fires:
 
 ```typescript
-// Stream complete: full accumulated text goes to the service worker
 const [inputCount, outputCount] = await Promise.all([
-  countTokens(promptText),      // accurate BPE via js-tiktoken
+  countTokens(promptText),
   countTokens(outputTextBuffer),
 ]);
 
-// Fall back to chars/4 if BPE counting fails
 if (inputCount > 0) summary.inputTokens = inputCount;
 if (outputCount > 0) summary.outputTokens = outputCount;
 ```
 
-The tokenizer uses Anthropic's actual `claude.json` BPE vocabulary from `@anthropic-ai/tokenizer`. Same vocab Claude uses. Runs in the service worker, off the main thread. Cold start on first message: ~20-40ms. Warm: negligible.
+The tokenizer uses Anthropic's actual `claude.json` from `@anthropic-ai/tokenizer`. Same vocab Claude uses. Runs in the service worker, off the main thread. Cold start: ~20-40ms. Warm: negligible.
 
 ---
 
-## Pricing (current)
+## Pricing
 
 | Model | Input | Output | Context |
 |-------|-------|--------|---------|
-| claude-opus-4-6 | $5 / 1M tokens | $25 / 1M tokens | 200K |
-| claude-sonnet-4-6 | $3 / 1M tokens | $15 / 1M tokens | 200K |
-| claude-haiku-4-5 | $1 / 1M tokens | $5 / 1M tokens | 200K |
+| claude-opus-4-6 | $5 / 1M | $25 / 1M | 200K |
+| claude-sonnet-4-6 | $3 / 1M | $15 / 1M | 200K |
+| claude-haiku-4-5 | $1 / 1M | $5 / 1M | 200K |
 
-Cost is calculated per-request at stream end and accumulated per tab in `chrome.storage.session`. Session storage clears automatically when the browser closes. No persistence.
+Cost accumulates per tab in `chrome.storage.session` and clears when the browser closes.
 
 ---
 
@@ -160,55 +130,51 @@ Cost is calculated per-request at stream end and accumulated per tab in `chrome.
 ```bash
 git clone https://github.com/OpenCodeIntel/lco
 cd lco
-bun install
-bun run build
+bun install && bun run build
 ```
 
 Load in Chrome:
 
-1. Navigate to `chrome://extensions`
-2. Toggle **Developer mode** (top-right)
-3. Click **Load unpacked** → select `.output/chrome-mv3`
-4. Open `claude.ai` — a banner asks to enable LCO on first visit
+1. Go to `chrome://extensions`
+2. Turn on **Developer mode**
+3. **Load unpacked:** select `.output/chrome-mv3`
+4. Open `claude.ai`
 
-The overlay appears in the bottom-right corner of the page.
-
-For development with hot reload:
+For hot reload during development:
 
 ```bash
 bun run dev
 ```
 
-Load `.output/chrome-mv3` once. Changes to source files reload automatically.
+Load `.output/chrome-mv3` once. Source file changes reload automatically.
 
-See [SETUP.md](SETUP.md) for troubleshooting and verification steps.
+See [SETUP.md](SETUP.md) for troubleshooting.
 
 ---
 
-## What's not built yet
+## What's next
 
-- **Only claude.ai.** The architecture supports adding providers (`lib/adapters/`), but no other adapter exists yet.
-- **No prompt compression guidance.** lco observes and reports. It does not yet tell you when to start a new chat or how to reduce context waste.
-- **No persistent history.** Everything lives in `chrome.storage.session`. Clears when the browser closes. No charts over time.
-- **No Firefox.** Works on Chrome and Chromium-based browsers. Firefox MV2/MV3 support is on the list.
-- **chars/4 is approximate.** Real-time display during streaming uses character count divided by four. Close for English prose, rougher for dense code. The final count (post-stream) is accurate BPE.
-- **Context % is per-request, not per-conversation.** We see what each API call sends. Claude maintains conversation history server-side — we can only measure what comes through the stream.
+Claude-only right now. Multi-provider is the point.
+
+- **ChatGPT adapter:** same architecture, different endpoint
+- **Coaching nudges:** tell you when to start a new chat, not just how full you are
+- **Cross-session history:** token trends over time, not just per-browser-session data that clears on close
+- **Firefox**
+
+If your workflow touches more than one AI tool, lco should cover all of them.
 
 ---
 
 ## Privacy
 
-Everything runs in your browser. No servers. No accounts. No telemetry.
-
-Your prompt text is processed in memory by the local BPE tokenizer to produce a token count. It is never written to disk and never transmitted anywhere. `chrome.storage.session` holds token counts and costs only — not prompt content.
+No servers. No accounts. No telemetry. Your prompts pass through the local BPE tokenizer to produce a count. They're never written to disk. They're never transmitted. `chrome.storage.session` holds counts and costs only.
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to help and what's currently hard.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a full technical walkthrough.
+[CONTRIBUTING.md](CONTRIBUTING.md) has what's currently hard to build.
+[ARCHITECTURE.md](ARCHITECTURE.md) is the full technical walkthrough.
 
 ---
 
