@@ -1,4 +1,4 @@
-# Chrome Web Store Listing — Saar
+# Chrome Web Store Listing: Saar
 
 Reference file for the CWS developer dashboard submission.
 
@@ -14,19 +14,19 @@ See token count, cost, and context usage live on claude.ai. All counting happens
 
 ## Full description
 
-Claude strips token counts from its web UI. Every request fires an SSE stream containing your token usage, stop reasons, and context data — and Claude's interface discards all of it before you ever see it.
+Claude strips token counts from its web UI. Every request fires an SSE stream containing your token usage, stop reasons, and context data. Claude's interface discards all of it before you ever see it.
 
 Saar intercepts that stream before the data disappears, counts tokens locally using Anthropic's own BPE vocabulary, and renders what you're spending in a live overlay directly on claude.ai.
 
 **What you see:**
 - Token count and estimated cost for every reply, updated live as Claude streams
 - Running session total across all conversations in the same tab
-- Context window utilization (1M for Opus 4.7 and Sonnet 4.6, 200K for Haiku 4.5)
+- Context window utilization (Opus 4.7: 1M; Sonnet 4.6: 1M on claude.ai Free and Pro plans; Haiku 4.5: 200K)
 - Message limit utilization when applicable
 - Smart nudges when context is filling up: warnings at 60%, 75%, and 90%
 
 **How it works:**
-Saar intercepts the fetch stream on claude.ai using a secure, sandboxed injected script. Token counting runs entirely inside your browser using a bundled BPE tokenizer — the same vocabulary Anthropic uses. No text, no messages, no personal data ever leaves your machine.
+Saar intercepts the fetch stream on claude.ai using a secure, sandboxed injected script. Token counting runs entirely inside your browser using a bundled BPE tokenizer: the same vocabulary Anthropic uses. No text, no messages, no personal data ever leaves your machine.
 
 **Privacy:**
 - Zero data collection. No analytics, no telemetry, no servers.
@@ -35,7 +35,7 @@ Saar intercepts the fetch stream on claude.ai using a secure, sandboxed injected
 - Fully open source: github.com/OpenCodeIntel/lco
 
 **Permissions:**
-- claude.ai access is optional and requested at runtime — the extension does nothing until you explicitly enable it.
+- claude.ai access is optional and requested at runtime. The extension does nothing until you explicitly enable it.
 - storage, tabs, scripting, alarms, unlimitedStorage, and sidePanel are used solely for local token counting, session cleanup, and the side panel UI.
 
 ---
@@ -65,7 +65,7 @@ This extension intercepts the SSE stream on claude.ai to read token usage
 data that Claude's web UI discards. Specifically:
 
 1. A sandboxed IIFE script is injected via chrome.scripting at document_start
-   to wrap window.fetch and tee the response stream. The tee is read-only —
+   to wrap window.fetch and tee the response stream. The tee is read-only;
    the original stream is passed through to claude.ai unmodified.
 
 2. The injected script communicates with the extension's content script via
@@ -91,9 +91,9 @@ Source code: https://github.com/OpenCodeIntel/lco
 
 ## Screenshots (1280x800 — save to docs/cws-assets/)
 
-1. `docs/cws-assets/screenshot-1-overlay.png` — overlay mid-conversation showing live token count and cost
-2. `docs/cws-assets/screenshot-2-threshold.png` — context bar near warning threshold (amber nudge visible)
-3. `docs/cws-assets/screenshot-3-session-totals.png` — session totals after multiple requests
+1. `docs/cws-assets/screenshot-1-overlay.png`: overlay mid-conversation showing live token count and cost
+2. `docs/cws-assets/screenshot-2-threshold.png`: context bar near warning threshold (amber nudge visible)
+3. `docs/cws-assets/screenshot-3-session-totals.png`: session totals after multiple requests
 
 ## Icons
 

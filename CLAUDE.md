@@ -1,10 +1,10 @@
-# LCO: Local Context Optimizer
+# Saar
 
 Chrome extension (WXT + TypeScript) that intercepts SSE streams on claude.ai, counts tokens via local BPE, calculates cost, and displays it in a non-intrusive Shadow DOM overlay.
 
 ## Product Vision
 
-LCO is not just a token counter. The goal is to gamify the context window problem: help users see how their AI conversations consume context, teach them when to start a new chat, when to use Claude Projects, and how to write more efficient prompts. A fitness tracker for AI usage.
+Saar is an AI usage coach, not just a token counter. The goal is to help users see how their AI conversations consume context, teach them when to start a new chat, when to use Claude Projects, and how to write more efficient prompts. A fitness tracker for AI usage.
 
 Claude.ai first. Get it perfect here, then the architecture supports new platforms by dropping in an adapter file.
 
@@ -40,7 +40,7 @@ Each `lib/` module is an **agent**: a set of pure functions with a single respon
 | Token Economics | `lib/token-economics.ts` | `UsageDelta[]` | `TokenEconomicsResult` (median Maps keyed by model) |
 | Budget Agent | `lib/usage-budget.ts` | `UsageLimitsData` + current timestamp (ms) | `UsageBudgetResult` |
 
-**Helpers** (types, formatters, validators — no orchestrator I/O):
+**Helpers** (types, formatters, validators; no orchestrator I/O):
 
 | Module | Role |
 |--------|------|
@@ -50,7 +50,7 @@ Each `lib/` module is an **agent**: a set of pure functions with a single respon
 | `lib/platform-config.ts` | Per-platform constants (endpoints, selectors) |
 | `lib/bridge-validation.ts` | 5-layer postMessage schema validator |
 
-**Adapters** (`lib/adapters/` — platform abstraction layer):
+**Adapters** (`lib/adapters/`: platform abstraction layer):
 
 | Module | Role |
 |--------|------|
