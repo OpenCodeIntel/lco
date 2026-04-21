@@ -1,15 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { Chrome } from 'lucide-react'
+import { CWS_URL } from '@/lib/constants'
 
 export const metadata: Metadata = {
   title: 'Why Saar',
   description:
     'Platforms selling compute have no incentive to help you use less of it. Saar does.',
 }
-
-const CWS_URL =
-  'https://chromewebstore.google.com/detail/saar-local-context-optimi/placeholder'
 
 export default function WhyPage() {
   return (

@@ -1,14 +1,12 @@
 import type { Metadata } from 'next'
 import { Chrome } from 'lucide-react'
 import WaitlistForm from './waitlist-form'
+import { CWS_URL } from '@/lib/constants'
 
 export const metadata: Metadata = {
   title: 'Install Saar',
   description: 'Add Saar to Chrome free. Join the MCP and Desktop waitlist.',
 }
-
-const CWS_URL =
-  'https://chromewebstore.google.com/detail/saar-local-context-optimi/placeholder'
 
 export default function InstallPage() {
   return (

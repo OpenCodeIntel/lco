@@ -1,9 +1,7 @@
 import Link from 'next/link'
 import { Chrome } from 'lucide-react'
 import LiveHeroCard from '@/components/sections/live-hero-card'
-
-const CWS_URL =
-  'https://chromewebstore.google.com/detail/saar-local-context-optimi/placeholder'
+import { CWS_URL } from '@/lib/constants'
 
 export default function Hero() {
   return (
