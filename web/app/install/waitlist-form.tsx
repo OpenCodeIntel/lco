@@ -48,26 +48,29 @@ export default function WaitlistForm() {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col sm:flex-row gap-3 max-w-md">
-      <input
-        type="email"
-        required
-        placeholder="you@example.com"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        disabled={state === 'loading'}
-        className="flex-1 px-4 py-3 rounded-lg border border-saar-border bg-saar-card text-saar-text placeholder:text-saar-muted text-sm outline-none focus:border-saar-accent transition-colors disabled:opacity-50"
-      />
-      <button
-        type="submit"
-        disabled={state === 'loading' || !email.trim()}
-        className="px-5 py-3 rounded-lg bg-saar-card border border-saar-border text-saar-text text-sm font-medium hover:border-saar-accent hover:text-saar-accent transition-colors disabled:opacity-50 whitespace-nowrap"
-      >
-        {state === 'loading' ? 'Joining...' : 'Notify me'}
-      </button>
+    <div className="max-w-md">
+      <form onSubmit={submit} className="flex flex-col sm:flex-row gap-3">
+        <input
+          type="email"
+          required
+          maxLength={254}
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={state === 'loading'}
+          className="flex-1 px-4 py-3 rounded-lg border border-saar-border bg-saar-card text-saar-text placeholder:text-saar-muted text-sm outline-none focus:border-saar-accent transition-colors disabled:opacity-50"
+        />
+        <button
+          type="submit"
+          disabled={state === 'loading' || !email.trim()}
+          className="px-5 py-3 rounded-lg bg-saar-card border border-saar-border text-saar-text text-sm font-medium hover:border-saar-accent hover:text-saar-accent transition-colors disabled:opacity-50 whitespace-nowrap"
+        >
+          {state === 'loading' ? 'Joining...' : 'Notify me'}
+        </button>
+      </form>
       {state === 'error' && (
-        <p className="text-saar-red text-xs mt-1 sm:col-span-2">{errorMsg}</p>
+        <p className="text-saar-red text-xs mt-2">{errorMsg}</p>
       )}
-    </form>
+    </div>
   )
 }
