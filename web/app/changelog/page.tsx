@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { getChangelogEntries } from '@/lib/changelog'
 
 export const metadata: Metadata = {
-  title: 'Changelog — Saar',
+  title: 'Changelog · Saar',
   description: 'What shipped and when.',
 }
 

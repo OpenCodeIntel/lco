@@ -32,7 +32,7 @@ export default function HomePage() {
               className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-lg bg-saar-accent text-white font-medium hover:bg-saar-accent/90 transition-colors text-base"
             >
               <Chrome width={18} height={18} />
-              Add to Chrome — it&apos;s free
+              Add to Chrome &middot; free
             </a>
             <Link
               href="/install"

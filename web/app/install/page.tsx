@@ -35,7 +35,7 @@ export default function InstallPage() {
             className="inline-flex items-center gap-3 px-6 py-4 rounded-xl bg-saar-accent text-white font-medium text-lg hover:bg-saar-accent/90 transition-colors"
           >
             <Chrome width={22} height={22} />
-            Add to Chrome — it&apos;s free
+            Add to Chrome &middot; free
           </a>
 
           <div className="mt-6 grid grid-cols-3 gap-4 max-w-sm">

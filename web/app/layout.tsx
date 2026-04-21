@@ -15,12 +15,12 @@ const instrumentSerif = Instrument_Serif({
 })
 
 export const metadata: Metadata = {
-  title: 'Saar — AI Usage Coach',
+  title: 'Saar · AI Usage Coach',
   description:
     'Platforms sell compute. Saar helps you use less of it. The AI usage coach for Claude, ChatGPT, and every tool coming next.',
   metadataBase: new URL('https://getsaar.com'),
   openGraph: {
-    title: 'Saar — AI Usage Coach',
+    title: 'Saar · AI Usage Coach',
     description: 'An AI usage coach for people who actually notice.',
     url: 'https://getsaar.com',
     siteName: 'Saar',
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Saar — AI Usage Coach',
+    title: 'Saar · AI Usage Coach',
     description: 'An AI usage coach for people who actually notice.',
   },
 }
