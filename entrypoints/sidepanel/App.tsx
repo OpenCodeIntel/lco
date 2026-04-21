@@ -23,6 +23,7 @@ import TodayCard from './components/TodayCard';
 import UsageBudgetCard from './components/UsageBudgetCard';
 import ActiveConversation from './components/ActiveConversation';
 import ConversationList from './components/ConversationList';
+import FeedbackWidget from './components/FeedbackWidget';
 
 export default function App() {
     const {
@@ -77,6 +78,8 @@ export default function App() {
             <CollapsibleSection title="History" storageKey="history" defaultOpen>
                 <ConversationList conversations={conversations} />
             </CollapsibleSection>
+
+            <FeedbackWidget />
         </div>
     );
 }
