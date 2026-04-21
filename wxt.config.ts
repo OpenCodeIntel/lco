@@ -10,8 +10,8 @@ export default defineConfig({
   manifest: {
     name: 'Saar',
     // 132-char limit for CWS short description.
-    description: 'See token count, cost, and context usage live on claude.ai. All counting happens locally — no data ever leaves your browser.',
-    homepage_url: 'https://lco.opencodeintel.com',
+    description: 'See token count, cost, and context usage live on claude.ai. All counting happens locally. No data ever leaves your browser.',
+    homepage_url: 'https://getsaar.com',
     permissions: ['storage', 'tabs', 'scripting', 'alarms', 'unlimitedStorage', 'sidePanel'],
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

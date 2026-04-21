@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Privacy Policy — Local Context Optimizer</title>
+  <title>Privacy Policy — Saar</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 720px; margin: 60px auto; padding: 0 24px; color: #18181b; line-height: 1.7; }
     h1 { font-size: 1.6rem; margin-bottom: 4px; }
@@ -14,22 +14,22 @@
 </head>
 <body>
   <h1>Privacy Policy</h1>
-  <p class="meta">Local Context Optimizer &mdash; Last updated April 2026</p>
+  <p class="meta">Saar: Last updated April 2026</p>
 
   <h2>Summary</h2>
-  <p>Local Context Optimizer (LCO) processes all data locally inside your browser. No text, tokens, costs, or usage data are ever transmitted to any server operated by this extension.</p>
+  <p>Saar processes all data locally inside your browser. Token counts and costs are stored temporarily in your browser session only. No text, tokens, costs, or usage data are ever transmitted to any server operated by this extension.</p>
 
   <h2>What data is processed</h2>
-  <p>LCO intercepts the SSE response stream from <code>claude.ai</code> to read token counts and model information returned by Anthropic's servers. This data is:</p>
+  <p>Saar intercepts the SSE response stream from <code>claude.ai</code> to read token counts and model information returned by Anthropic's servers. This data is:</p>
   <ul>
-    <li>Counted locally using a BPE tokenizer bundled inside the extension.</li>
-    <li>Stored temporarily in <code>chrome.storage.session</code>, scoped to your current browser session. It is cleared when the browser closes.</li>
+    <li>Counted locally using a BPE tokenizer bundled inside the extension. Any response content passing through this process is held transiently in memory to compute the count and then immediately discarded.</li>
+    <li>Stored temporarily in <code>chrome.storage.session</code> as derived counts and costs only, scoped to your current browser session. It is cleared when the browser closes.</li>
     <li>Never sent to any external server, analytics service, or third party.</li>
   </ul>
 
   <h2>What data is not collected</h2>
   <ul>
-    <li>The content of your messages or Claude's responses is never read or stored.</li>
+    <li>The content of your messages or Claude's responses is never stored or transmitted. It passes through memory transiently to compute token counts and is then discarded.</li>
     <li>No account information, cookies, or authentication tokens are accessed.</li>
     <li>No personally identifiable information is collected.</li>
     <li>No usage analytics or telemetry are sent anywhere.</li>
@@ -41,16 +41,18 @@
     <li><strong>tabs</strong> — identifies which tab a token count belongs to so session totals stay per-tab.</li>
     <li><strong>scripting</strong> — injects the stream interceptor into <code>claude.ai</code> at page load.</li>
     <li><strong>alarms</strong> — schedules periodic cleanup of stale session data for closed tabs.</li>
+    <li><strong>unlimitedStorage</strong> — allows the extension to store session data without Chrome's default quota limits.</li>
+    <li><strong>sidePanel</strong> — enables the side panel UI showing session history and cost totals.</li>
     <li><strong>optional host permission: <code>https://claude.ai/*</code></strong> — requested at runtime when you first enable the extension. Required to observe the SSE stream on that domain.</li>
   </ul>
 
   <h2>Third-party services</h2>
-  <p>LCO does not integrate with any third-party analytics, advertising, or data collection service. The BPE tokenizer vocabulary (<code>claude.json</code>) is bundled inside the extension and does not make network requests.</p>
+  <p>Saar does not integrate with any third-party analytics, advertising, or data collection service. The BPE tokenizer vocabulary (<code>claude.json</code>) is bundled inside the extension and does not make network requests.</p>
 
   <h2>Open source</h2>
-  <p>LCO is fully open source. You can inspect every line of code at <a href="https://github.com/OpenCodeIntel/lco">github.com/OpenCodeIntel/lco</a>.</p>
+  <p>Saar is fully open source. You can inspect every line of code at <a href="https://github.com/OpenCodeIntel/lco">github.com/OpenCodeIntel/lco</a>.</p>
 
   <h2>Contact</h2>
-  <p>Questions about this policy: <a href="https://opencodeintel.com">opencodeintel.com</a></p>
+  <p>Questions about this policy: <a href="https://getsaar.com">getsaar.com</a></p>
 </body>
 </html>

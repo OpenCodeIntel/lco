@@ -1,10 +1,10 @@
-# LCO: Local Context Optimizer
+# Saar
 
 Chrome extension (WXT + TypeScript) that intercepts SSE streams on claude.ai, counts tokens via local BPE, calculates cost, and displays it in a non-intrusive Shadow DOM overlay.
 
 ## Product Vision
 
-LCO is not just a token counter. The goal is to gamify the context window problem: help users see how their AI conversations consume context, teach them when to start a new chat, when to use Claude Projects, and how to write more efficient prompts. A fitness tracker for AI usage.
+Saar is an AI usage coach, not just a token counter. The goal is to help users see how their AI conversations consume context, teach them when to start a new chat, when to use Claude Projects, and how to write more efficient prompts. A fitness tracker for AI usage.
 
 Claude.ai first. Get it perfect here, then the architecture supports new platforms by dropping in an adapter file.
 
@@ -25,6 +25,8 @@ Background worker. Runs `js-tiktoken` with `@anthropic-ai/tokenizer` claude.json
 
 Each `lib/` module is an **agent**: a set of pure functions with a single responsibility, a typed input, and a typed output. No DOM refs, no chrome APIs, no side effects. The content script (`claude-ai.content.ts`) is the **orchestrator** that wires agents together, calls them in sequence, and feeds their outputs to the rendering layer.
 
+**Agents** (pure-function, orchestrator inputs):
+
 | Agent | Module | Input | Output |
 |-------|--------|-------|--------|
 | Intelligence Agent | `lib/context-intelligence.ts` | `ConversationState` | `ContextSignal[]` |
@@ -33,6 +35,27 @@ Each `lib/` module is an **agent**: a set of pure functions with a single respon
 | Pricing Agent | `lib/pricing.ts` | model, inputTokens, outputTokens | cost (USD) or null |
 | Memory Agent | `lib/conversation-store.ts` | conversationId, turn data | `ConversationRecord` |
 | Handoff Agent | `lib/handoff-summary.ts` | `ConversationRecord` + `HealthScore` | continuation prompt (string) |
+| Delta Coach | `lib/delta-coaching.ts` | `DeltaCoachInput` (session utilization deltas per turn) | `ContextSignal[]` |
+| Pre-Submit Agent | `lib/pre-submit.ts` | `PreSubmitInput` (draftCharCount, model, pctPerInputToken, sessionPct) | `PreSubmitEstimate` |
+| Token Economics | `lib/token-economics.ts` | `UsageDelta[]` | `TokenEconomicsResult` (median Maps keyed by model) |
+| Budget Agent | `lib/usage-budget.ts` | `UsageLimitsData` + current timestamp (ms) | `UsageBudgetResult` |
+
+**Helpers** (types, formatters, validators; no orchestrator I/O):
+
+| Module | Role |
+|--------|------|
+| `lib/message-types.ts` | Canonical type definitions for all postMessage schemas |
+| `lib/format.ts` | Number/cost/percentage formatters for the overlay |
+| `lib/overlay-state.ts` | Overlay render-state shape and defaults |
+| `lib/platform-config.ts` | Per-platform constants (endpoints, selectors) |
+| `lib/bridge-validation.ts` | 5-layer postMessage schema validator |
+
+**Adapters** (`lib/adapters/`: platform abstraction layer):
+
+| Module | Role |
+|--------|------|
+| `lib/adapters/types.ts` | Shared adapter interface |
+| `lib/adapters/claude.ts` | Claude.ai SSE event decoder |
 
 **Rules for agents:**
 - Pure functions only. If it touches the DOM or chrome.*, it belongs in the orchestrator, not the agent.
@@ -65,13 +88,14 @@ The Message bridge and Orchestrator are co-located in `entrypoints/claude-ai.con
 - **5-layer bridge security.** Origin check, source check, namespace (`LCO_V1`), session token (UUID v4 per load), schema validation. All five must pass or the message is dropped.
 - **Platform attribution from `sender.url`** (set by Chrome, unforgeable). Never trust self-reported platform strings.
 
-## Pricing (March 2026)
+## Pricing (April 2026)
 
-| Model | Input/M | Output/M |
-|-------|---------|----------|
-| Opus 4.6 | $5 | $25 |
-| Sonnet 4.6 | $3 | $15 |
-| Haiku 4.5 | $1 | $5 |
+| Model | Input/M | Output/M | Context |
+|-------|---------|----------|---------|
+| Opus 4.7 | $5 | $25 | 1M |
+| Opus 4.6 | $5 | $25 | 1M |
+| Sonnet 4.6 | $3 | $15 | 1M |
+| Haiku 4.5 | $1 | $5 | 200K |
 
 ## Conventions
 

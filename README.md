@@ -1,15 +1,15 @@
-# lco
+# Saar
 
 Anthropic earns more when you burn more tokens. Their docs won't tell you when to start a new chat. Their dashboard won't show you context rot happening in real time.
 
-Saar built lco to fix that. It intercepts Claude's API stream before the UI strips it, counts tokens locally with Anthropic's own BPE vocabulary, and shows you exactly what each message costs.
+Saar fixes that. It intercepts Claude's API stream before the UI strips it, counts tokens locally with Anthropic's own BPE vocabulary, and shows you exactly what each message costs.
 
 ---
 
 ## The overlay
 
 ```
-┌─ LCO ──────────────────────────────────┐
+┌─ Saar ─────────────────────────────────┐
 │ claude-sonnet-4-6                       │
 │ 2,847 in / 1,203 out   $0.0267          │
 │ ████████████░░░░░░░░░░░░  18% context   │
@@ -19,7 +19,7 @@ Saar built lco to fix that. It intercepts Claude's API stream before the UI stri
 
 - **Live token counts:** input and output, every 200ms as Claude responds
 - **Per-request cost:** BPE counts at stream end, not estimated
-- **Context window bar:** how much of the 200K window this conversation has consumed
+- **Context window bar:** how much of the active model's context limit this conversation has consumed (model-specific: 1M for Opus and Sonnet, 200K for Haiku)
 - **Session totals:** cumulative cost and request count for the tab
 - **Message limit bar:** fills amber as you approach Claude's usage cap, pulled from the API directly
 
@@ -45,7 +45,7 @@ Saar tells you.
 
 Chrome MV3 forces three isolated JavaScript contexts. Saar uses that structure instead of fighting it.
 
-![lco architecture: three isolated JavaScript contexts connected by validated message passing](.github/assets/Architecture.svg)
+![Saar architecture: three isolated JavaScript contexts connected by validated message passing](.github/assets/Architecture.svg)
 
 > **Diagram source:** [.github/assets/architecture.excalidraw](.github/assets/architecture.excalidraw)
 
@@ -68,7 +68,7 @@ window.fetch = async function (input, init) {
     const response = await originalFetch.call(this, input, init);
 
     if (response.body) {
-      // .tee() splits the stream: one copy for Claude's UI, one for lco.
+      // .tee() splits the stream: one copy for Claude's UI, one for Saar.
       const [pageStream, monitorStream] = response.body.tee();
       decodeSSEStream(monitorStream, model, prompt);
       return new Response(pageStream, response);
@@ -115,8 +115,9 @@ The tokenizer uses Anthropic's actual `claude.json` from `@anthropic-ai/tokenize
 
 | Model | Input | Output | Context |
 |-------|-------|--------|---------|
-| claude-opus-4-6 | $5 / 1M | $25 / 1M | 200K |
-| claude-sonnet-4-6 | $3 / 1M | $15 / 1M | 200K |
+| claude-opus-4-7 | $5 / 1M | $25 / 1M | 1M |
+| claude-opus-4-6 | $5 / 1M | $25 / 1M | 1M |
+| claude-sonnet-4-6 | $3 / 1M | $15 / 1M | 1M |
 | claude-haiku-4-5 | $1 / 1M | $5 / 1M | 200K |
 
 Cost accumulates per tab in `chrome.storage.session` and clears when the browser closes.
@@ -161,7 +162,7 @@ Claude-only right now. Multi-provider is the point.
 - **Cross-session history:** token trends over time, not just per-browser-session data that clears on close
 - **Firefox**
 
-If your workflow touches more than one AI tool, lco should cover all of them.
+If your workflow touches more than one AI tool, Saar should cover all of them.
 
 ---
 
