@@ -1,4 +1,4 @@
-# lco
+# Saar
 
 Anthropic earns more when you burn more tokens. Their docs won't tell you when to start a new chat. Their dashboard won't show you context rot happening in real time.
 
@@ -115,8 +115,9 @@ The tokenizer uses Anthropic's actual `claude.json` from `@anthropic-ai/tokenize
 
 | Model | Input | Output | Context |
 |-------|-------|--------|---------|
-| claude-opus-4-6 | $5 / 1M | $25 / 1M | 200K |
-| claude-sonnet-4-6 | $3 / 1M | $15 / 1M | 200K |
+| claude-opus-4-7 | $5 / 1M | $25 / 1M | 1M |
+| claude-opus-4-6 | $5 / 1M | $25 / 1M | 1M |
+| claude-sonnet-4-6 | $3 / 1M | $15 / 1M | 1M |
 | claude-haiku-4-5 | $1 / 1M | $5 / 1M | 200K |
 
 Cost accumulates per tab in `chrome.storage.session` and clears when the browser closes.

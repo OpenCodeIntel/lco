@@ -1,6 +1,6 @@
 {
-  "name": "lco-extension",
-  "description": "Local Context Optimizer — real-time token counting for AI platforms",
+  "name": "saar",
+  "description": "Saar: real-time AI usage tracker for Claude",
   "private": true,
   "version": "0.1.0",
   "type": "module",
