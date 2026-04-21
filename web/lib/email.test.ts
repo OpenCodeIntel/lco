@@ -14,6 +14,14 @@ describe('isValidEmail', () => {
     expect(isValidEmail('user+tag@example.com')).toBe(true)
   })
 
+  it('rejects empty string', () => {
+    expect(isValidEmail('')).toBe(false)
+  })
+
+  it('rejects whitespace only', () => {
+    expect(isValidEmail('   ')).toBe(false)
+  })
+
   it('rejects bare @', () => {
     expect(isValidEmail('@')).toBe(false)
   })
