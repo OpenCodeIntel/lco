@@ -1,6 +1,7 @@
 import { Resend } from 'resend'
 import { NextResponse } from 'next/server'
 import { headers } from 'next/headers'
+import { isValidEmail } from '@/lib/email'
 
 interface WaitlistBody {
   email: string
@@ -45,8 +46,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const email = body.email?.trim().toLowerCase()
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  if (!email || !emailRegex.test(email) || email.length > 254) {
+  if (!email || !isValidEmail(email)) {
     return NextResponse.json({ error: 'Valid email required' }, { status: 400 })
   }
 
