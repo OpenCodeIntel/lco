@@ -74,6 +74,11 @@ export const OVERLAY_CSS = `
   to   { opacity: 0; transform: translateY(-4px); }
 }
 
+@keyframes lco-coaching-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
 /* ── Widget container ── */
 
 .lco-widget {
@@ -132,6 +137,7 @@ export const OVERLAY_CSS = `
   text-transform: uppercase;
   color: var(--lco-accent);
   opacity: 0.75;
+  flex: 1;
 }
 
 .lco-cost-mini {
@@ -157,14 +163,19 @@ export const OVERLAY_CSS = `
   pointer-events: none;
 }
 
-/* ── Data rows ── */
+/* ── Draft estimate (pre-submit) ── */
 
-.lco-row {
+.lco-draft-row {
   display: flex;
   align-items: baseline;
   gap: 5px;
   white-space: nowrap;
   overflow: hidden;
+  opacity: 0.7;
+}
+
+.lco-draft-row .lco-label {
+  font-style: italic;
 }
 
 .lco-label {
@@ -179,29 +190,6 @@ export const OVERLAY_CSS = `
   overflow: hidden;
   text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
-}
-
-.lco-accent { color: var(--lco-accent); }
-
-.lco-divider {
-  height: 1px;
-  background: var(--lco-border);
-  margin: 5px 0;
-}
-
-/* ── Draft estimate (pre-submit) ── */
-
-.lco-draft-row {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  white-space: nowrap;
-  overflow: hidden;
-  opacity: 0.7;
-}
-
-.lco-draft-row .lco-label {
-  font-style: italic;
 }
 
 .lco-draft-compare {
@@ -219,14 +207,53 @@ export const OVERLAY_CSS = `
   color: var(--lco-warn-fill);
 }
 
-/* ── Health indicator ── */
+/* ── Hero cost ── */
 
-.lco-health-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin: 4px 0 2px;
+.lco-hero-cost {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--lco-text);
+  margin: 6px 0 0;
+  transition: color 0.2s ease;
 }
+
+.lco-hero-cost--critical {
+  color: #ef4444;
+}
+
+.lco-sub-label {
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--lco-muted);
+  opacity: 0.7;
+  margin: 2px 0 8px;
+}
+
+/* ── Last reply ── */
+
+.lco-last-reply {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  margin: 4px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.lco-last-reply__label {
+  color: var(--lco-muted);
+}
+
+.lco-last-reply__value {
+  color: var(--lco-accent);
+}
+
+/* ── Health dots (collapsed + expanded header) ── */
 
 .lco-health-dot {
   width: 6px;
@@ -241,22 +268,14 @@ export const OVERLAY_CSS = `
 .lco-health-dot--degrading { background: #f59e0b; box-shadow: 0 0 4px rgba(245, 158, 11, 0.4); }
 .lco-health-dot--critical  { background: #ef4444; animation: lco-dot-pulse 2s ease-in-out infinite; }
 
-.lco-health-label {
+/* ── Coaching text ── */
+
+.lco-coaching-text {
   font-size: 10px;
-  font-weight: 600;
-  line-height: 1.4;
-  /* No transition: color is a paint property; health state changes snap instantly. */
-}
-
-.lco-health-label--healthy   { color: #86efac; }
-.lco-health-label--degrading { color: #f59e0b; }
-.lco-health-label--critical  { color: #ef4444; }
-
-.lco-coaching {
-  font-size: 9px;
   line-height: 1.4;
   color: var(--lco-muted);
-  margin: 2px 0 3px;
+  margin: 6px 0;
+  animation: lco-coaching-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* ── Start fresh button ── */
@@ -318,16 +337,42 @@ export const OVERLAY_CSS = `
 
 /* ── Progress bars ── */
 
+.lco-bar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  margin: 6px 0 2px;
+}
+
+.lco-bar-head__label {
+  color: var(--lco-muted);
+}
+
+.lco-bar-head__value {
+  font-variant-numeric: tabular-nums;
+  color: var(--lco-text);
+}
+
+.lco-bar-head__value--healthy   { color: #86efac; }
+.lco-bar-head__value--degrading { color: #f59e0b; }
+.lco-bar-head__value--critical  { color: #ef4444; }
+
+.lco-bar-head--warn .lco-bar-head__value {
+  color: var(--lco-warn-fill);
+}
+
 .lco-bar-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 2px 0;
+  margin: 0 0 4px;
 }
 
 .lco-bar-track {
   flex: 1;
-  height: 3px;
+  height: 4px;
   background: var(--lco-bar-bg);
   border-radius: 99px;
   overflow: hidden;
@@ -361,17 +406,6 @@ export const OVERLAY_CSS = `
 
 .lco-bar-fill.lco-streaming {
   animation: lco-bar-pulse 1.2s ease-in-out infinite;
-}
-
-.lco-bar-label {
-  font-size: 9px;
-  line-height: 1.4;
-  color: var(--lco-muted);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-  min-width: 46px;
-  text-align: right;
 }
 
 /* ── Nudge ── */
@@ -420,7 +454,7 @@ export const OVERLAY_CSS = `
   outline-offset: 2px;
 }
 
-/* ── Health warning ── */
+/* ── Health warning (broken state) ── */
 
 .lco-health {
   margin-top: 4px;
@@ -439,6 +473,8 @@ export const OVERLAY_CSS = `
   .lco-bar-fill               { transition: none; }
   .lco-bar-fill.lco-streaming { animation: none; }
   .lco-health-dot--critical   { animation: none; }
+  .lco-hero-cost              { transition: none; }
+  .lco-coaching-text          { animation: none; }
   .lco-start-fresh,
   .lco-start-fresh--critical  { transition: none; }
   .lco-nudge,
