@@ -342,12 +342,22 @@ export function createOverlay(): OverlayHandle {
         }
 
         // Coaching text: from health score, rendered only when not healthy.
+        // Animation is scoped to an --entering class so it replays on
+        // healthy→not-healthy transitions, not at mount while hidden.
         if (elCoaching) {
             if (state.health && state.health.level !== 'healthy') {
+                const wasHidden = elCoaching.style.display === 'none';
                 elCoaching.textContent = state.health.coaching;
-                elCoaching.style.display = '';
+                if (wasHidden) {
+                    elCoaching.style.display = '';
+                    elCoaching.classList.remove('lco-coaching-text--entering');
+                    // Force reflow so the class re-add restarts the animation.
+                    void elCoaching.offsetWidth;
+                    elCoaching.classList.add('lco-coaching-text--entering');
+                }
             } else {
                 elCoaching.style.display = 'none';
+                elCoaching.classList.remove('lco-coaching-text--entering');
             }
         }
 

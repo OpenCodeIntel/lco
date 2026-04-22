@@ -275,6 +275,10 @@ export const OVERLAY_CSS = `
   line-height: 1.4;
   color: var(--lco-muted);
   margin: 6px 0;
+}
+
+/* Animation runs only on the transition from hidden to visible, not at mount. */
+.lco-coaching-text--entering {
   animation: lco-coaching-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
@@ -474,7 +478,7 @@ export const OVERLAY_CSS = `
   .lco-bar-fill.lco-streaming { animation: none; }
   .lco-health-dot--critical   { animation: none; }
   .lco-hero-cost              { transition: none; }
-  .lco-coaching-text          { animation: none; }
+  .lco-coaching-text--entering { animation: none; }
   .lco-start-fresh,
   .lco-start-fresh--critical  { transition: none; }
   .lco-nudge,
