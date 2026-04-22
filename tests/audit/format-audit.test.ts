@@ -57,6 +57,19 @@ describe('formatCost', () => {
         expect(formatCost(0.0073, 4)).toBe('$0.0073');
     });
 
+    test('fractional cost under $0.01 auto-promotes to 4 decimals at default', () => {
+        expect(formatCost(0.0029)).toBe('$0.0029');
+        expect(formatCost(0.009)).toBe('$0.0090');
+    });
+
+    test('fractional cost at $0.01 boundary stays 2 decimals', () => {
+        expect(formatCost(0.01)).toBe('$0.01');
+    });
+
+    test('explicit decimals override wins over auto-promotion', () => {
+        expect(formatCost(0.0029, 4)).toBe('$0.0029');
+    });
+
     test('large cost', () => {
         expect(formatCost(100.5)).toBe('$100.50');
     });

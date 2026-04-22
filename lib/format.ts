@@ -14,11 +14,22 @@ export function formatTokens(n: number): string {
 
 /**
  * Format cost in dollars.
- * null -> "$0.00*" (unknown model), 0.0073 -> "$0.0073", 1.5 -> "$1.50"
+ * null -> "$0.00*" (unknown model), 1.5 -> "$1.50", 100 -> "$100.00".
+ *
+ * Auto-promotes to 4 decimals when a positive fractional amount would otherwise
+ * round to "$0.00" at the default 2-decimal precision. Keeps displayed cost
+ * consistent across surfaces: a $0.0029 session reads as $0.0029 in both the
+ * overlay and the side panel, never $0.00 on one and $0.0029 on the other.
+ * Only activates when the caller accepts the default precision; explicit
+ * decimals arguments (e.g. decimals: 6) are respected as-is.
+ *
  * @param decimals - number of decimal places (default 2 for dashboard, use 4 for per-request overlay)
  */
 export function formatCost(cost: number | null, decimals: number = 2): string {
     if (cost === null) return '$0.00*';
+    if (decimals === 2 && cost > 0 && cost < 0.01) {
+        return `$${cost.toFixed(4)}`;
+    }
     return `$${cost.toFixed(decimals)}`;
 }
 
