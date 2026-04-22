@@ -316,11 +316,12 @@ export function useDashboardData(): DashboardData {
                     if (tabIdRef.current !== null) {
                         loadActiveConversation(tabIdRef.current);
                     }
-                    // Recompute today's daily summary so TODAY stays in sync with turn
-                    // writes. Without this, TODAY lags the active conversation until the
-                    // background alarm fires (~30 min). computeDailySummary writes
-                    // daily:{orgId}:{date}, which the hasDailyChange arm picks up below
-                    // and feeds to loadToday(). [GET-18]
+                    // conv: writes never trigger hasDailyChange, so TODAY drifts from
+                    // the active conversation until the background alarm fires (~30 min).
+                    // Eagerly recompute: computeDailySummary writes daily:{orgId}:{date},
+                    // which the hasDailyChange arm below catches and feeds to loadToday().
+                    // Trade-off: reads all org conv records on each turn. Cost grows with
+                    // history depth but is fire-and-forget and fine at 90-day scale. [GET-18]
                     const orgId = orgIdRef.current;
                     if (orgId) {
                         void computeDailySummary(orgId, todayDateString()).catch(() => {});
