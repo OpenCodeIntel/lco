@@ -30,22 +30,20 @@ function fmtCost(c: number | null): string {
 export function createOverlay(): OverlayHandle {
     // DOM refs — null until mount() is called. render() is a no-op until then.
     let overlayWidget: HTMLDivElement | null = null;
-    let elCurrentRequest: HTMLElement | null = null;
-    let elHealthRow: HTMLElement | null = null;
-    let elHealthDot: HTMLElement | null = null;
-    let elHealthLabel: HTMLElement | null = null;
+    let elHeroCost: HTMLElement | null = null;
+    let elLastReplyRow: HTMLElement | null = null;
+    let elLastReplyValue: HTMLElement | null = null;
+    let elContextHead: HTMLElement | null = null;
+    let elContextHeadPct: HTMLElement | null = null;
     let elContextRow: HTMLElement | null = null;
     let elContextFill: HTMLElement | null = null;
-    let elContextLabel: HTMLElement | null = null;
     let elCoaching: HTMLElement | null = null;
     let elStartFresh: HTMLButtonElement | null = null;
     let startFreshCallback: (() => void) | null = null;
+    let elLimitHead: HTMLElement | null = null;
+    let elLimitHeadPct: HTMLElement | null = null;
     let elLimitRow: HTMLElement | null = null;
     let elLimitFill: HTMLElement | null = null;
-    let elLimitLabel: HTMLElement | null = null;
-    let elDivider: HTMLElement | null = null;
-    let elSessionRow: HTMLElement | null = null;
-    let elSession: HTMLElement | null = null;
     let elNudge: HTMLElement | null = null;
     let elNudgeMsg: HTMLElement | null = null;
     let elNudgeDismiss: HTMLButtonElement | null = null;
@@ -68,7 +66,8 @@ export function createOverlay(): OverlayHandle {
         widget.style.display = 'none'; // hidden until first TOKEN_BATCH
         overlayWidget = widget;
 
-        // Header — always visible, click to collapse/expand
+        // Header: brand left, session-total mini (collapsed only), health dot right.
+        // Dot stays visible expanded and collapsed: it is the sole health signal.
         const header = document.createElement('div');
         header.className = 'lco-header';
 
@@ -81,10 +80,8 @@ export function createOverlay(): OverlayHandle {
         costMini.style.display = 'none'; // shown only when collapsed
         elCostMini = costMini;
 
-        // Health dot shown in collapsed pill — sole health signal when minimized.
         const healthDotMini = document.createElement('span');
         healthDotMini.className = 'lco-health-dot';
-        healthDotMini.style.display = 'none';
         elHealthDotMini = healthDotMini;
 
         header.appendChild(title);
@@ -92,11 +89,11 @@ export function createOverlay(): OverlayHandle {
         header.appendChild(healthDotMini);
         widget.appendChild(header);
 
-        // Body — collapsible
+        // Body — collapsible.
         const body = document.createElement('div');
         body.className = 'lco-body';
 
-        // Draft estimate row: pre-submit cost preview (above "this reply")
+        // Draft estimate rows: pre-submit preview, above the hero.
         const draftRow = document.createElement('div');
         draftRow.className = 'lco-draft-row';
         draftRow.style.display = 'none';
@@ -111,50 +108,62 @@ export function createOverlay(): OverlayHandle {
         draftRow.appendChild(valDraft);
         body.appendChild(draftRow);
 
-        // Draft model comparison (hidden unless cost > 5%)
         const draftCompare = document.createElement('div');
         draftCompare.className = 'lco-draft-compare';
         draftCompare.style.display = 'none';
         elDraftCompare = draftCompare;
         body.appendChild(draftCompare);
 
-        // Draft warning (hidden unless projected total >= 90%)
         const draftWarning = document.createElement('div');
         draftWarning.className = 'lco-draft-warning';
         draftWarning.style.display = 'none';
         elDraftWarning = draftWarning;
         body.appendChild(draftWarning);
 
-        // Last request row
-        const rowLast = document.createElement('div');
-        rowLast.className = 'lco-row';
+        // Hero: session total cost dominates the widget.
+        const heroCost = document.createElement('div');
+        heroCost.className = 'lco-hero-cost';
+        heroCost.textContent = '$0.00';
+        elHeroCost = heroCost;
+        body.appendChild(heroCost);
+
+        const subLabel = document.createElement('div');
+        subLabel.className = 'lco-sub-label';
+        subLabel.textContent = 'session total';
+        body.appendChild(subLabel);
+
+        // Last reply: muted label + terra cotta value. Hidden until first reply.
+        const lastReply = document.createElement('div');
+        lastReply.className = 'lco-last-reply';
+        lastReply.style.display = 'none';
+        elLastReplyRow = lastReply;
         const lblLast = document.createElement('span');
-        lblLast.className = 'lco-label';
-        lblLast.textContent = 'this reply';
+        lblLast.className = 'lco-last-reply__label';
+        lblLast.textContent = 'last reply';
         const valLast = document.createElement('span');
-        valLast.className = 'lco-value lco-accent';
+        valLast.className = 'lco-last-reply__value';
         valLast.textContent = '—';
-        elCurrentRequest = valLast;
-        rowLast.appendChild(lblLast);
-        rowLast.appendChild(valLast);
-        body.appendChild(rowLast);
+        elLastReplyValue = valLast;
+        lastReply.appendChild(lblLast);
+        lastReply.appendChild(valLast);
+        body.appendChild(lastReply);
 
-        // Health indicator: colored dot + label
-        const healthRow = document.createElement('div');
-        healthRow.className = 'lco-health-row';
-        healthRow.style.display = 'none';
-        elHealthRow = healthRow;
-        const healthDot = document.createElement('span');
-        healthDot.className = 'lco-health-dot';
-        elHealthDot = healthDot;
-        const healthLabel = document.createElement('span');
-        healthLabel.className = 'lco-health-label';
-        elHealthLabel = healthLabel;
-        healthRow.appendChild(healthDot);
-        healthRow.appendChild(healthLabel);
-        body.appendChild(healthRow);
+        // Context bar: stacked head (label + percent) + thin track underneath.
+        const ctxHead = document.createElement('div');
+        ctxHead.className = 'lco-bar-head';
+        ctxHead.style.display = 'none';
+        elContextHead = ctxHead;
+        const ctxHeadLabel = document.createElement('span');
+        ctxHeadLabel.className = 'lco-bar-head__label';
+        ctxHeadLabel.textContent = 'context';
+        const ctxHeadPct = document.createElement('span');
+        ctxHeadPct.className = 'lco-bar-head__value';
+        ctxHeadPct.textContent = '—%';
+        elContextHeadPct = ctxHeadPct;
+        ctxHead.appendChild(ctxHeadLabel);
+        ctxHead.appendChild(ctxHeadPct);
+        body.appendChild(ctxHead);
 
-        // Context window bar (now below health indicator)
         const ctxRow = document.createElement('div');
         ctxRow.className = 'lco-bar-row';
         ctxRow.style.display = 'none';
@@ -166,22 +175,18 @@ export function createOverlay(): OverlayHandle {
         ctxFill.style.transform = 'scaleX(0)';
         elContextFill = ctxFill;
         ctxTrack.appendChild(ctxFill);
-        const ctxLabel = document.createElement('span');
-        ctxLabel.className = 'lco-bar-label';
-        ctxLabel.textContent = '—% ctx';
-        elContextLabel = ctxLabel;
         ctxRow.appendChild(ctxTrack);
-        ctxRow.appendChild(ctxLabel);
         body.appendChild(ctxRow);
 
-        // Coaching text (below context bar, from health score)
+        // Coaching text: full opacity, 10px, slide-up + fade on mount.
         const coaching = document.createElement('div');
-        coaching.className = 'lco-coaching';
+        coaching.className = 'lco-coaching-text';
         coaching.style.display = 'none';
         elCoaching = coaching;
         body.appendChild(coaching);
 
-        // "Start fresh" button (visible when Degrading or Critical)
+        // "Start fresh" button: visible when Degrading or Critical.
+        // Critical gets a filled variant; degrading keeps the outline.
         const freshBtn = document.createElement('button');
         freshBtn.className = 'lco-start-fresh';
         freshBtn.textContent = 'Start fresh';
@@ -192,7 +197,22 @@ export function createOverlay(): OverlayHandle {
         elStartFresh = freshBtn;
         body.appendChild(freshBtn);
 
-        // Message limit bar
+        // Message limit bar: same stacked layout, always terra cotta warn.
+        const limitHead = document.createElement('div');
+        limitHead.className = 'lco-bar-head lco-bar-head--warn';
+        limitHead.style.display = 'none';
+        elLimitHead = limitHead;
+        const limitHeadLabel = document.createElement('span');
+        limitHeadLabel.className = 'lco-bar-head__label';
+        limitHeadLabel.textContent = 'message limit';
+        const limitHeadPct = document.createElement('span');
+        limitHeadPct.className = 'lco-bar-head__value';
+        limitHeadPct.textContent = '—%';
+        elLimitHeadPct = limitHeadPct;
+        limitHead.appendChild(limitHeadLabel);
+        limitHead.appendChild(limitHeadPct);
+        body.appendChild(limitHead);
+
         const limitRow = document.createElement('div');
         limitRow.className = 'lco-bar-row';
         limitRow.style.display = 'none';
@@ -204,38 +224,10 @@ export function createOverlay(): OverlayHandle {
         limitFill.style.transform = 'scaleX(0)';
         elLimitFill = limitFill;
         limitTrack.appendChild(limitFill);
-        const limitLabel = document.createElement('span');
-        limitLabel.className = 'lco-bar-label';
-        limitLabel.textContent = '—% limit';
-        elLimitLabel = limitLabel;
         limitRow.appendChild(limitTrack);
-        limitRow.appendChild(limitLabel);
         body.appendChild(limitRow);
 
-        // Divider — hidden until first request completes
-        const divider = document.createElement('div');
-        divider.className = 'lco-divider';
-        divider.style.display = 'none';
-        elDivider = divider;
-        body.appendChild(divider);
-
-        // Session row — hidden until first request completes
-        const rowSession = document.createElement('div');
-        rowSession.className = 'lco-row';
-        rowSession.style.display = 'none';
-        elSessionRow = rowSession;
-        const lblSession = document.createElement('span');
-        lblSession.className = 'lco-label';
-        lblSession.textContent = 'total';
-        const valSession = document.createElement('span');
-        valSession.className = 'lco-value';
-        valSession.textContent = '—';
-        elSession = valSession;
-        rowSession.appendChild(lblSession);
-        rowSession.appendChild(valSession);
-        body.appendChild(rowSession);
-
-        // Nudge — hidden by default, shown by showNudge()
+        // Nudge — hidden by default, shown by showNudge().
         const nudge = document.createElement('div');
         nudge.style.display = 'none';
         elNudge = nudge;
@@ -251,7 +243,7 @@ export function createOverlay(): OverlayHandle {
         nudge.appendChild(nudgeDismiss);
         body.appendChild(nudge);
 
-        // Health warning — hidden by default
+        // Broken-state health warning (not the three-state label).
         const health = document.createElement('div');
         health.className = 'lco-health';
         health.style.display = 'none';
@@ -261,13 +253,12 @@ export function createOverlay(): OverlayHandle {
         widget.appendChild(body);
         shadow.appendChild(widget);
 
-        // Collapse/expand toggle — DOM-only concern, lives here
+        // Collapse/expand toggle. Dot stays visible in both states.
         let collapsed = false;
         header.addEventListener('click', () => {
             collapsed = !collapsed;
             body.classList.toggle('lco-body--collapsed', collapsed);
             costMini.style.display = collapsed ? '' : 'none';
-            healthDotMini.style.display = collapsed ? '' : 'none';
             widget.classList.toggle('lco-collapsed', collapsed);
         });
     }
@@ -317,47 +308,40 @@ export function createOverlay(): OverlayHandle {
             }
         }
 
-        if (elCurrentRequest && state.lastRequest) {
-            const { inputTokens, outputTokens, cost } = state.lastRequest;
-            // Lead with exact session % when available (Anthropic endpoint, not estimated).
-            // Falls back to token/cost display when delta has not yet resolved.
-            if (state.lastDeltaUtilization !== null) {
-                elCurrentRequest.textContent =
-                    `${state.lastDeltaUtilization.toFixed(1)}% of session · ${fmtCost(cost)}`;
+        // Hero: session total dominates. Critical health swaps terra cotta for red.
+        if (elHeroCost) {
+            const total = state.session.totalCost;
+            elHeroCost.textContent = total !== null && total > 0 ? fmtCost(total) : '$0.00';
+            elHeroCost.classList.toggle('lco-hero-cost--critical', state.health?.level === 'critical');
+        }
+
+        // Last reply: show when first reply lands.
+        if (elLastReplyRow && elLastReplyValue) {
+            if (state.lastRequest) {
+                elLastReplyValue.textContent = fmtCost(state.lastRequest.cost);
+                elLastReplyRow.style.display = '';
             } else {
-                elCurrentRequest.textContent =
-                    `~${fmt(inputTokens)} in · ~${fmt(outputTokens)} out · ${fmtCost(cost)}`;
+                elLastReplyRow.style.display = 'none';
             }
         }
 
-        // Health indicator: show the three-state label with colored dot.
-        if (elHealthRow && elHealthDot && elHealthLabel) {
-            const hasHealth = state.health !== null;
-            elHealthRow.style.display = hasHealth ? '' : 'none';
-            if (hasHealth) {
-                const { level, label } = state.health!;
-                elHealthDot.className = `lco-health-dot lco-health-dot--${level}`;
-                elHealthLabel.textContent = label;
-                elHealthLabel.className = `lco-health-label lco-health-label--${level}`;
-            }
-        }
-
-        // Context bar: still shows the raw percentage for users who want detail.
-        if (elContextRow && elContextFill && elContextLabel) {
+        // Context bar: stacked head (label + health-colored percent) + track below.
+        if (elContextHead && elContextHeadPct && elContextRow && elContextFill) {
             const visible = state.contextPct !== null && state.contextPct > 0.1;
+            elContextHead.style.display = visible ? '' : 'none';
             elContextRow.style.display = visible ? '' : 'none';
             if (visible) {
                 const pct = Math.min(state.contextPct!, 100);
-                elContextFill.style.transform = `scaleX(${pct / 100})`;
-                elContextLabel.textContent = `${pct.toFixed(0)}%`;
-                // Color the bar based on health level.
                 const level = state.health?.level ?? 'healthy';
+                elContextFill.style.transform = `scaleX(${pct / 100})`;
                 elContextFill.className = `lco-bar-fill lco-bar-fill--${level}`;
                 elContextFill.classList.toggle('lco-streaming', state.streaming);
+                elContextHeadPct.textContent = `${pct.toFixed(0)}%`;
+                elContextHeadPct.className = `lco-bar-head__value lco-bar-head__value--${level}`;
             }
         }
 
-        // Coaching text from the health score.
+        // Coaching text: from health score, rendered only when not healthy.
         if (elCoaching) {
             if (state.health && state.health.level !== 'healthy') {
                 elCoaching.textContent = state.health.coaching;
@@ -367,32 +351,23 @@ export function createOverlay(): OverlayHandle {
             }
         }
 
-        // "Start fresh" button: visible when Degrading or Critical.
-        // Critical gets a filled variant; degrading keeps the outline.
+        // "Start fresh" button: degrading outline, critical filled.
         if (elStartFresh) {
             const showFresh = state.health !== null && state.health.level !== 'healthy';
             elStartFresh.style.display = showFresh ? '' : 'none';
             elStartFresh.classList.toggle('lco-start-fresh--critical', state.health?.level === 'critical');
         }
 
-        if (elLimitRow && elLimitFill && elLimitLabel) {
+        // Message limit bar: stacked head + track, always terra cotta warn tint.
+        if (elLimitHead && elLimitHeadPct && elLimitRow && elLimitFill) {
             const visible = state.messageLimitUtilization !== null;
+            elLimitHead.style.display = visible ? '' : 'none';
             elLimitRow.style.display = visible ? '' : 'none';
             if (visible) {
                 const pct = Math.min(state.messageLimitUtilization! * 100, 100);
                 elLimitFill.style.transform = `scaleX(${pct / 100})`;
-                elLimitLabel.textContent = `${pct.toFixed(0)}% limit`;
+                elLimitHeadPct.textContent = `${pct.toFixed(0)}%`;
             }
-        }
-
-        const sessionVisible = state.session.requestCount > 0;
-        if (elDivider) elDivider.style.display = sessionVisible ? '' : 'none';
-        if (elSessionRow) elSessionRow.style.display = sessionVisible ? '' : 'none';
-        if (elSession && sessionVisible) {
-            const { requestCount, totalInputTokens, totalOutputTokens, totalCost } = state.session;
-            const total = totalInputTokens + totalOutputTokens;
-            elSession.textContent =
-                `${requestCount} req · ~${fmt(total)} tok · ${fmtCost(totalCost)}`;
         }
 
         if (elHealth) {
@@ -404,13 +379,11 @@ export function createOverlay(): OverlayHandle {
             }
         }
 
-        // Collapsed pill: show session total (not last reply cost).
-        // Cost color stays terra cotta regardless of health state — dot is the sole health signal.
+        // Collapsed pill: SAAR + session total + health dot (GET-15 contract).
         if (elCostMini && state.session.requestCount > 0) {
             elCostMini.textContent = fmtCost(state.session.totalCost);
         }
 
-        // Collapsed health dot: mirrors the expanded dot color.
         if (elHealthDotMini) {
             const level = state.health?.level ?? 'healthy';
             elHealthDotMini.className = `lco-health-dot lco-health-dot--${level}`;
