@@ -316,6 +316,15 @@ export function useDashboardData(): DashboardData {
                     if (tabIdRef.current !== null) {
                         loadActiveConversation(tabIdRef.current);
                     }
+                    // Recompute today's daily summary so TODAY stays in sync with turn
+                    // writes. Without this, TODAY lags the active conversation until the
+                    // background alarm fires (~30 min). computeDailySummary writes
+                    // daily:{orgId}:{date}, which the hasDailyChange arm picks up below
+                    // and feeds to loadToday(). [GET-18]
+                    const orgId = orgIdRef.current;
+                    if (orgId) {
+                        void computeDailySummary(orgId, todayDateString()).catch(() => {});
+                    }
                 }
                 if (hasDailyChange) {
                     loadToday();
