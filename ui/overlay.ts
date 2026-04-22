@@ -51,6 +51,7 @@ export function createOverlay(): OverlayHandle {
     let elNudgeDismiss: HTMLButtonElement | null = null;
     let elHealth: HTMLElement | null = null;
     let elCostMini: HTMLElement | null = null;
+    let elHealthDotMini: HTMLElement | null = null;
     let nudgeHideTimer: ReturnType<typeof setTimeout> | null = null;
     let elDraftRow: HTMLElement | null = null;
     let elDraftValue: HTMLElement | null = null;
@@ -80,8 +81,15 @@ export function createOverlay(): OverlayHandle {
         costMini.style.display = 'none'; // shown only when collapsed
         elCostMini = costMini;
 
+        // Health dot shown in collapsed pill — sole health signal when minimized.
+        const healthDotMini = document.createElement('span');
+        healthDotMini.className = 'lco-health-dot';
+        healthDotMini.style.display = 'none';
+        elHealthDotMini = healthDotMini;
+
         header.appendChild(title);
         header.appendChild(costMini);
+        header.appendChild(healthDotMini);
         widget.appendChild(header);
 
         // Body — collapsible
@@ -259,6 +267,7 @@ export function createOverlay(): OverlayHandle {
             collapsed = !collapsed;
             body.classList.toggle('lco-body--collapsed', collapsed);
             costMini.style.display = collapsed ? '' : 'none';
+            healthDotMini.style.display = collapsed ? '' : 'none';
             widget.classList.toggle('lco-collapsed', collapsed);
         });
     }
@@ -359,9 +368,11 @@ export function createOverlay(): OverlayHandle {
         }
 
         // "Start fresh" button: visible when Degrading or Critical.
+        // Critical gets a filled variant; degrading keeps the outline.
         if (elStartFresh) {
             const showFresh = state.health !== null && state.health.level !== 'healthy';
             elStartFresh.style.display = showFresh ? '' : 'none';
+            elStartFresh.classList.toggle('lco-start-fresh--critical', state.health?.level === 'critical');
         }
 
         if (elLimitRow && elLimitFill && elLimitLabel) {
@@ -393,8 +404,16 @@ export function createOverlay(): OverlayHandle {
             }
         }
 
-        if (elCostMini && state.lastRequest) {
-            elCostMini.textContent = fmtCost(state.lastRequest.cost);
+        // Collapsed pill: show session total (not last reply cost).
+        // Cost color stays terra cotta regardless of health state — dot is the sole health signal.
+        if (elCostMini && state.session.requestCount > 0) {
+            elCostMini.textContent = fmtCost(state.session.totalCost);
+        }
+
+        // Collapsed health dot: mirrors the expanded dot color.
+        if (elHealthDotMini) {
+            const level = state.health?.level ?? 'healthy';
+            elHealthDotMini.className = `lco-health-dot lco-health-dot--${level}`;
         }
     }
 
