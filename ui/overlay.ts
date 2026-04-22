@@ -391,8 +391,9 @@ export function createOverlay(): OverlayHandle {
         if (elSession && sessionVisible) {
             const { requestCount, totalInputTokens, totalOutputTokens, totalCost } = state.session;
             const total = totalInputTokens + totalOutputTokens;
+            const turnLabel = requestCount === 1 ? 'turn' : 'turns';
             elSession.textContent =
-                `${requestCount} req · ~${fmt(total)} tok · ${fmtCost(totalCost)}`;
+                `${requestCount} ${turnLabel} · ~${fmt(total)} tok · ${fmtCost(totalCost)}`;
         }
 
         if (elHealth) {

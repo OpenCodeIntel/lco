@@ -253,7 +253,7 @@ export const OVERLAY_CSS = `
 .lco-health-label--critical  { color: #ef4444; }
 
 .lco-coaching {
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.4;
   color: var(--lco-muted);
   margin: 2px 0 3px;
