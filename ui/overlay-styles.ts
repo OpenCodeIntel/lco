@@ -355,13 +355,11 @@ export const OVERLAY_CSS = `
   box-shadow: 0 0 6px var(--lco-warn-glow);
 }
 
-.lco-bar-fill--healthy   { background: #86efac; box-shadow: 0 0 6px rgba(134, 239, 172, 0.3); }
-.lco-bar-fill--degrading { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.3); }
-.lco-bar-fill--critical  { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.3); }
-
-/* Budget zone fill colors — used by the weekly cap bar */
+.lco-bar-fill--healthy,
 .lco-bar-fill--comfortable { background: #86efac; box-shadow: 0 0 6px rgba(134, 239, 172, 0.3); }
+.lco-bar-fill--degrading,
 .lco-bar-fill--moderate    { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.3); }
+.lco-bar-fill--critical    { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.3); }
 .lco-bar-fill--tight       { background: #fb923c; box-shadow: 0 0 6px rgba(251, 146, 60, 0.3); }
 
 .lco-bar-fill.lco-streaming {

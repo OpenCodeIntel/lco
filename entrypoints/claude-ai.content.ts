@@ -60,15 +60,17 @@ async function fetchStoredRecord(orgId: string | null, conversationId: string): 
 
 /**
  * Fetch the Anthropic usage limits for this account, forward to background for
- * storage, and return the 5-hour session utilization percentage.
+ * storage, and return a UsageBudgetResult (session + weekly utilization with
+ * reset metadata), or null on any failure.
  *
  * The usage endpoint returns exact session and weekly utilization with reset
  * timestamps — the same data shown on claude.ai/settings/limits.
  *
  * Called on ORGANIZATION_DETECTED (page load) and after each STREAM_COMPLETE.
- * The returned utilization value is used for delta tracking: the caller snapshots
- * the before-value, calls this, and subtracts to get the exact session cost of
- * the last message.
+ * Callers use result.sessionPct for delta tracking: snapshot the before-value,
+ * call this, and subtract to get the exact session cost of the last message.
+ * result.weeklyPct drives the overlay weekly-cap bar and the side panel
+ * Usage Budget card.
  *
  * Returns null on any failure (network error, malformed response). The caller
  * treats null as "delta uncomputable" and records the turn without a delta.
