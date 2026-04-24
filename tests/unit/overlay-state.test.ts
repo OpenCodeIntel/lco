@@ -10,9 +10,10 @@ import {
     applyHealthBroken,
     applyHealthRecovered,
     applyMessageLimit,
+    applyUsageBudget,
 } from '../../lib/overlay-state';
 import type { OverlayState } from '../../lib/overlay-state';
-import type { TabState } from '../../lib/message-types';
+import type { TabState, UsageBudgetResult } from '../../lib/message-types';
 
 const MODEL = 'claude-haiku-4-5';
 const TOKEN_PAYLOAD = { inputTokens: 1000, outputTokens: 200, model: MODEL };
@@ -262,6 +263,61 @@ describe('lastDeltaUtilization spread semantics', () => {
         expect(reset.lastDeltaUtilization).toBeNull();
         // The old state is unchanged.
         expect(state.lastDeltaUtilization).toBe(8.0);
+    });
+});
+
+// ── applyUsageBudget ──────────────────────────────────────────────────────────
+
+function makeBudget(weeklyPct: number, zone: UsageBudgetResult['zone'] = 'comfortable'): UsageBudgetResult {
+    return {
+        sessionPct: 10,
+        weeklyPct,
+        sessionMinutesUntilReset: 120,
+        weeklyResetLabel: 'Wed 9:00 AM',
+        zone,
+        statusLabel: `10% used; resets in 2h`,
+    };
+}
+
+describe('applyUsageBudget', () => {
+    it('sets usageBudget on state', () => {
+        const budget = makeBudget(71, 'moderate');
+        const next = applyUsageBudget(INITIAL_STATE, budget);
+        expect(next.usageBudget).toBe(budget);
+    });
+
+    it('overwrites a previous usageBudget value', () => {
+        const first = makeBudget(30, 'comfortable');
+        const second = makeBudget(85, 'tight');
+        const state = applyUsageBudget(INITIAL_STATE, first);
+        const next = applyUsageBudget(state, second);
+        expect(next.usageBudget?.weeklyPct).toBe(85);
+    });
+
+    it('does not mutate other fields', () => {
+        const budget = makeBudget(50);
+        const next = applyUsageBudget(INITIAL_STATE, budget);
+        expect(next.streaming).toBe(INITIAL_STATE.streaming);
+        expect(next.lastRequest).toBe(INITIAL_STATE.lastRequest);
+        expect(next.messageLimitUtilization).toBe(INITIAL_STATE.messageLimitUtilization);
+    });
+
+    it('INITIAL_STATE has null usageBudget', () => {
+        expect(INITIAL_STATE.usageBudget).toBeNull();
+    });
+
+    it('is preserved through applyTokenBatch', () => {
+        const budget = makeBudget(71, 'moderate');
+        const state: OverlayState = { ...INITIAL_STATE, usageBudget: budget };
+        const next = applyTokenBatch(state, TOKEN_PAYLOAD);
+        expect(next.usageBudget).toBe(budget);
+    });
+
+    it('is preserved through applyStreamComplete', () => {
+        const budget = makeBudget(91, 'critical');
+        const state: OverlayState = { ...INITIAL_STATE, usageBudget: budget };
+        const next = applyStreamComplete(state, TOKEN_PAYLOAD);
+        expect(next.usageBudget).toBe(budget);
     });
 });
 

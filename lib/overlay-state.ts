@@ -4,7 +4,7 @@
 // The content script calls these and passes the result to overlay.render().
 
 import { calculateCost, getContextWindowSize } from './pricing';
-import type { TabState } from './message-types';
+import type { TabState, UsageBudgetResult } from './message-types';
 import type { HealthScore } from './health-score';
 import type { ConversationRecord } from './conversation-store';
 import type { PreSubmitEstimate } from './pre-submit';
@@ -41,6 +41,12 @@ export interface OverlayState {
      * Set by the compose box observer or the pre-send fallback in inject.ts.
      */
     draftEstimate: PreSubmitEstimate | null;
+    /**
+     * Weekly cap utilization derived from /api/organizations/{orgId}/usage.
+     * Null until the first successful fetchAndStoreUsageLimits call, or when
+     * the extension is running outside of claude.ai (no usage endpoint available).
+     */
+    usageBudget: UsageBudgetResult | null;
 }
 
 export const INITIAL_STATE: Readonly<OverlayState> = {
@@ -53,6 +59,7 @@ export const INITIAL_STATE: Readonly<OverlayState> = {
     health: null,
     lastDeltaUtilization: null,
     draftEstimate: null,
+    usageBudget: null,
 };
 
 
@@ -167,4 +174,9 @@ export function applyDraftEstimate(state: OverlayState, estimate: PreSubmitEstim
 /** Clear the draft estimate. Called on TOKEN_BATCH (message sent) and SPA navigation. */
 export function clearDraftEstimate(state: OverlayState): OverlayState {
     return { ...state, draftEstimate: null };
+}
+
+/** Apply a fresh UsageBudgetResult. Called after every fetchAndStoreUsageLimits call. */
+export function applyUsageBudget(state: OverlayState, budget: UsageBudgetResult): OverlayState {
+    return { ...state, usageBudget: budget };
 }
