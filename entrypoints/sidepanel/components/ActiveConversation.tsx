@@ -6,6 +6,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { ConversationRecord } from '../../../lib/conversation-store';
 import type { HealthScore } from '../../../lib/health-score';
 import { formatTokens, formatCost } from '../../../lib/format';
+import TurnTicker from './TurnTicker';
 
 interface Props {
     conv: ConversationRecord | null;
@@ -76,6 +77,11 @@ export default function ActiveConversation({ conv, health }: Props) {
                 </div>
                 <span className="lco-dash-context-label">{Math.round(safePct)}% context</span>
             </div>
+
+            {/* Per-turn ticker. Renders only when at least one tracked turn
+                exists in the conversation; otherwise it silently returns
+                null and the context bar above carries the full visual. */}
+            <TurnTicker turns={conv.turns} />
 
             <div className="lco-dash-active-stats">
                 <span>{conv.turnCount} turn{conv.turnCount === 1 ? '' : 's'}</span>

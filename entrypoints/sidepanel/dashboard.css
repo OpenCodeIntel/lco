@@ -534,6 +534,66 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+/* ── Per-turn ticker ────────────────────────────────────────────────────────
+   Vertical bars, one per recorded turn. Height encodes session %; color is
+   a single terra cotta tint for now (zone coloring lands with GET-28). The
+   visualization makes context rot legible: bars climb as the conversation
+   grows because each turn pulls in more history.
+
+   Sits between the context bar and the stats line so the eye reads:
+     verdict -> subject -> %context -> per-turn shape -> totals
+   in a top-to-bottom decay from coarsest to finest. */
+.lco-ticker {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    height: 36px;
+    margin: 6px 0 10px;
+}
+
+.lco-ticker-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    flex: 1;
+    height: 100%;
+}
+
+.lco-ticker-bar {
+    flex: 1;
+    min-width: 4px;
+    min-height: 2px;
+    background: var(--lco-accent);
+    border-radius: 1px;
+    /* Height transition is GPU-friendly enough at 12 elements; we still
+       gate it behind reduced-motion for users who prefer instant updates. */
+    transition: height 360ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: height;
+    cursor: default;
+}
+
+.lco-ticker-bar:focus-visible {
+    outline: 2px solid var(--lco-accent);
+    outline-offset: 1px;
+    border-radius: 1px;
+}
+
+.lco-ticker-trend {
+    font-family: var(--lco-font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--lco-text-muted);
+    align-self: flex-start;
+    padding-top: 2px;
+    flex-shrink: 0;
+}
+.lco-ticker-trend--up   { color: var(--lco-ember); }
+.lco-ticker-trend--down { color: var(--lco-patina); }
+
+@media (prefers-reduced-motion: reduce) {
+    .lco-ticker-bar { transition: none; }
+}
+
 /* Dot separators between stat spans; avoids hardcoding · in JSX. */
 .lco-dash-active-stats > span + span::before {
     content: ' · ';
