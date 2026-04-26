@@ -235,12 +235,44 @@ body {
     margin-bottom: 12px;
 }
 
+/* Inline SVG sigil. Sits left of the title, no border because the SVG
+   carries its own frame. The dashed-border placeholder this replaces was
+   the most visible "this is a side project" tell in the previous build. */
 .lco-dash-logo {
-    width: 36px;
-    height: 36px;
-    border-radius: var(--lco-radius);
-    border: 2px dashed var(--lco-border);
+    width: 32px;
+    height: 32px;
     flex-shrink: 0;
+    display: block;
+}
+
+/* Title block grows to fill the row so the gear stays right-aligned. */
+.lco-dash-header-text {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Settings trigger. Quiet by default (muted icon), warms to terra cotta
+   on hover. Keyboard focus gets the same ring used elsewhere on the panel. */
+.lco-dash-header-gear {
+    background: none;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    color: var(--lco-text-muted);
+    border-radius: var(--lco-radius-sm);
+    transition: color var(--lco-transition), background var(--lco-transition);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.lco-dash-header-gear:hover {
+    color: var(--lco-accent);
+    background: var(--lco-bg-hover);
+}
+.lco-dash-header-gear:focus-visible {
+    outline: 2px solid var(--lco-accent);
+    outline-offset: 2px;
 }
 
 /* Title in the display face at a real size jump from the subtitle below.

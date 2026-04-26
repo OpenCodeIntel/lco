@@ -15,7 +15,7 @@
 // the budget data to explain why the section is empty. Today and History are
 // org-scoped historical data and remain visible at all times.
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useDashboardData } from './hooks/useDashboardData';
 import Header from './components/Header';
 import CollapsibleSection from './components/CollapsibleSection';
@@ -36,10 +36,16 @@ export default function App() {
         loading,
     } = useDashboardData();
 
+    // Settings drawer open/close lives in the root so the header can trigger
+    // it and the drawer itself can render as a sibling of the main column.
+    // The drawer component lands in the next commit; for now the trigger
+    // toggles state and renders nothing.
+    const [settingsOpen, setSettingsOpen] = useState(false);
+
     if (loading) {
         return (
             <div className="lco-dash">
-                <Header />
+                <Header onOpenSettings={() => setSettingsOpen(true)} />
                 <div className="lco-dash-loading">Loading...</div>
             </div>
         );
@@ -47,7 +53,7 @@ export default function App() {
 
     return (
         <div className="lco-dash">
-            <Header />
+            <Header onOpenSettings={() => setSettingsOpen(true)} />
 
             {/* Today: historical, always visible regardless of active tab */}
             <CollapsibleSection title="Today" storageKey="today" defaultOpen>
