@@ -38,18 +38,18 @@ export function formatCost(cost: number | null, decimals: number = 2): string {
 /**
  * Tier-aware cost formatter. On flat-rate plans (Pro / Max / Free, all of
  * which dispatch to the `session` budget variant) Anthropic does not bill
- * the user per token; the dollar figure we display is the *API-equivalent*
+ * the user per token; the dollar figure we display is the API-equivalent
  * cost, useful as a relative anchor but technically not a charge.
  *
- * Showing a bare "$0.012" on a Pro account misleads: the user paid $20 for
- * the month, not $0.012 for that turn. We label these readings with a
- * leading "≈" and a trailing "API rate" note so the meaning is clear.
+ * Earlier draft suffixed these readings with "API rate"; first-look feedback
+ * was that the label competed with the figure and read as jargon. The "≈"
+ * symbol carries the same meaning more quietly: the value is approximate
+ * because it is computed from API rates, not billed against the user's plan.
  *
  * On credit accounts (Enterprise) the dollar figure is real spend against
- * the monthly pool, so we render it plain.
- *
- * Pass `null` for budget when the tier is genuinely unknown (no usage
- * endpoint reading yet); we conservatively label it as approximate.
+ * the monthly pool, so we render it plain. Pass `null` for budget when the
+ * tier is genuinely unknown (no usage endpoint reading yet); we
+ * conservatively label it as approximate.
  *
  * @param cost    cost in dollars, or null for unknown-model fallback
  * @param budget  current usage budget result (or its `kind` discriminator)
@@ -64,7 +64,7 @@ export function formatApiRateCost(
     if (cost === null) return base;            // already reads as "$0.00*"
     const kind = budget?.kind ?? null;
     if (kind === 'credit') return base;        // Enterprise pays per token; figure is real
-    return `≈${base} API rate`;                // session, unsupported, or unknown
+    return `≈${base}`;                         // session, unsupported, or unknown
 }
 
 /**
