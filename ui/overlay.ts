@@ -259,8 +259,13 @@ export function createOverlay(): OverlayHandle {
         rowSession.appendChild(valSession);
         body.appendChild(rowSession);
 
-        // Nudge — hidden by default, shown by showNudge()
+        // Nudge: hidden by default, shown by showNudge().
+        // The base class is set at mount so layout, padding, and font rules
+        // are in place before showNudge() ever runs. Without this, the very
+        // first nudge briefly rendered with no class until the showNudge
+        // call assigned `lco-nudge lco-nudge--<severity>` (audit L2).
         const nudge = document.createElement('div');
+        nudge.className = 'lco-nudge';
         nudge.style.display = 'none';
         elNudge = nudge;
         const nudgeMsg = document.createElement('span');
