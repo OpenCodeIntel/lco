@@ -13,7 +13,7 @@ import {
     applyUsageBudget,
 } from '../../lib/overlay-state';
 import type { OverlayState } from '../../lib/overlay-state';
-import type { TabState, UsageBudgetResult } from '../../lib/message-types';
+import type { TabState, UsageBudgetSession, BudgetZone } from '../../lib/message-types';
 
 const MODEL = 'claude-haiku-4-5';
 const TOKEN_PAYLOAD = { inputTokens: 1000, outputTokens: 200, model: MODEL };
@@ -268,8 +268,9 @@ describe('lastDeltaUtilization spread semantics', () => {
 
 // ── applyUsageBudget ──────────────────────────────────────────────────────────
 
-function makeBudget(weeklyPct: number, zone: UsageBudgetResult['zone'] = 'comfortable'): UsageBudgetResult {
+function makeBudget(weeklyPct: number, zone: BudgetZone = 'comfortable'): UsageBudgetSession {
     return {
+        kind: 'session',
         sessionPct: 10,
         weeklyPct,
         sessionMinutesUntilReset: 120,
@@ -291,7 +292,11 @@ describe('applyUsageBudget', () => {
         const second = makeBudget(85, 'tight');
         const state = applyUsageBudget(INITIAL_STATE, first);
         const next = applyUsageBudget(state, second);
-        expect(next.usageBudget?.weeklyPct).toBe(85);
+        // makeBudget always returns a session variant; narrow before reading
+        // session-only fields rather than reaching into the union with a cast.
+        expect(next.usageBudget?.kind).toBe('session');
+        if (next.usageBudget?.kind !== 'session') throw new Error('expected session');
+        expect(next.usageBudget.weeklyPct).toBe(85);
     });
 
     it('does not mutate other fields', () => {

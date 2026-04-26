@@ -400,12 +400,16 @@ describe('agent pipeline: economics -> pre-submit -> budget chain', () => {
 
     it('usage budget classifies zone from exact utilization data', () => {
         const limits: UsageLimitsData = {
+            kind: 'session',
             fiveHour: { utilization: 62, resetsAt: new Date(Date.now() + 3600_000).toISOString() },
             sevenDay: { utilization: 28, resetsAt: new Date(Date.now() + 86400_000 * 3).toISOString() },
             capturedAt: Date.now(),
         };
 
         const budget = computeUsageBudget(limits, Date.now());
+        // Narrow before reading session-only fields. Session is the only shape
+        // this fixture builds, so anything else is a regression worth blowing up on.
+        if (budget.kind !== 'session') throw new Error(`expected session variant, got ${budget.kind}`);
         expect(budget.sessionPct).toBe(62);
         expect(budget.weeklyPct).toBe(28);
         // max(62, 28) = 62: 50-74% = moderate

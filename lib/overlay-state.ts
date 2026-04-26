@@ -4,10 +4,17 @@
 // The content script calls these and passes the result to overlay.render().
 
 import { calculateCost, getContextWindowSize } from './pricing';
-import type { TabState, UsageBudgetResult } from './message-types';
+import type { TabState, UsageBudgetSession, UsageBudgetCredit } from './message-types';
 import type { HealthScore } from './health-score';
 import type { ConversationRecord } from './conversation-store';
 import type { PreSubmitEstimate } from './pre-submit';
+
+/**
+ * Renderable budget variants only. The unsupported variant has nothing for
+ * the in-page overlay to draw, so it never reaches state — the content
+ * script gates the call before applyUsageBudget runs.
+ */
+export type RenderableBudget = UsageBudgetSession | UsageBudgetCredit;
 
 export interface OverlayState {
     lastRequest: {
@@ -42,11 +49,13 @@ export interface OverlayState {
      */
     draftEstimate: PreSubmitEstimate | null;
     /**
-     * Weekly cap utilization derived from /api/organizations/{orgId}/usage.
+     * Tier-aware usage budget derived from /api/organizations/{orgId}/usage.
      * Null until the first successful fetchAndStoreUsageLimits call, or when
      * the extension is running outside of claude.ai (no usage endpoint available).
+     * Only renderable variants land here; the unsupported variant is filtered
+     * out at the call site (the overlay has no empty-state UI for it).
      */
-    usageBudget: UsageBudgetResult | null;
+    usageBudget: RenderableBudget | null;
 }
 
 export const INITIAL_STATE: Readonly<OverlayState> = {
@@ -176,7 +185,12 @@ export function clearDraftEstimate(state: OverlayState): OverlayState {
     return { ...state, draftEstimate: null };
 }
 
-/** Apply a fresh UsageBudgetResult. Called after every fetchAndStoreUsageLimits call. */
-export function applyUsageBudget(state: OverlayState, budget: UsageBudgetResult): OverlayState {
+/**
+ * Apply a fresh renderable budget. Called after every fetchAndStoreUsageLimits
+ * call. Typed to reject the unsupported variant: the overlay has no UI for an
+ * unrecognized account type, and forcing the caller to gate first keeps the
+ * bar-rendering code total.
+ */
+export function applyUsageBudget(state: OverlayState, budget: RenderableBudget): OverlayState {
     return { ...state, usageBudget: budget };
 }

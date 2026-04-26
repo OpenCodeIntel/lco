@@ -9,13 +9,26 @@
 //   Caller: useDashboardData.ts reads storage and calls computeUsageBudget()
 //   Consumer: UsageBudgetCard.tsx renders the result
 //
+// Tier dispatch:
+//   The endpoint exposes a different shape per account tier (see
+//   lib/usage-limits-parser.ts). This agent branches on `limits.kind` and
+//   returns the matching UsageBudgetResult variant. Render code never
+//   computes its own status text or zone — every label that ends up on the
+//   user's screen comes from here.
+//
 // Design principles (mirrors all other lib/ agents):
 //   - Pure functions only. No DOM, no chrome.*, no side effects.
 //   - Typed input, typed output. No implicit any.
 //   - Every value is derived from exact Anthropic data: no estimation, no guessing.
-//   - If the data is unavailable, the result says so clearly (statusLabel fallback).
+//   - If the data is unavailable, the result says so clearly via the kind.
 
-import type { UsageLimitsData, UsageBudgetResult, BudgetZone } from './message-types';
+import type {
+    UsageLimitsData,
+    UsageBudgetResult,
+    UsageBudgetSession,
+    UsageBudgetCredit,
+    BudgetZone,
+} from './message-types';
 
 // ── Zone classification ───────────────────────────────────────────────────────
 
@@ -83,7 +96,7 @@ function formatWeeklyResetLabel(resetsAt: string): string {
 // ── Status label ─────────────────────────────────────────────────────────────
 
 /**
- * Build the one-liner primary text for the UsageBudgetCard.
+ * Build the one-liner primary text for the UsageBudgetCard (session variant).
  * Session is the more urgent window (resets every 5 hours), so it leads.
  * Examples:
  *   comfortable: "11% used; resets in 53 min"
@@ -91,7 +104,7 @@ function formatWeeklyResetLabel(resetsAt: string): string {
  *   tight:       "82% used; resets in 23 min"
  *   critical:    "94% used; session nearly exhausted"
  */
-function buildStatusLabel(sessionPct: number, sessionMinutes: number, zone: BudgetZone): string {
+function buildSessionStatusLabel(sessionPct: number, sessionMinutes: number, zone: BudgetZone): string {
     const pctStr = `${Math.round(sessionPct)}% used`;
     if (zone === 'critical') {
         return `${pctStr}; session nearly exhausted`;
@@ -100,32 +113,136 @@ function buildStatusLabel(sessionPct: number, sessionMinutes: number, zone: Budg
     return `${pctStr}; resets in ${countdown}`;
 }
 
+// ── Credit-tier helpers ──────────────────────────────────────────────────────
+
+// `Intl.NumberFormat` constructors are not free; on a hot card render we would
+// build two per call (used + monthly). Cache by currency code — the same code
+// is reused across renders for one account, and the cache is bounded by the
+// number of currencies Anthropic actually returns (one per account, ever).
+// `null` marks codes Intl rejected so we do not retry the constructor.
+const currencyFormatterCache = new Map<string, Intl.NumberFormat | null>();
+
+function currencyFormatter(currency: string): Intl.NumberFormat | null {
+    if (currencyFormatterCache.has(currency)) {
+        return currencyFormatterCache.get(currency) ?? null;
+    }
+    try {
+        const fmt = new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency,
+            currencyDisplay: 'symbol',
+        });
+        currencyFormatterCache.set(currency, fmt);
+        return fmt;
+    } catch {
+        // Unknown currency code: cache the failure so we do not retry.
+        currencyFormatterCache.set(currency, null);
+        return null;
+    }
+}
+
+/**
+ * Format an integer cent amount in the given currency.
+ * 30491 USD → "$304.91". Falls back to a portable "USD 304.91" form for any
+ * currency code Intl cannot resolve, so the card never shows NaN or an empty
+ * string.
+ */
+function formatCents(cents: number, currency: string): string {
+    const amount = cents / 100;
+    const fmt = currencyFormatter(currency);
+    return fmt ? fmt.format(amount) : `${currency} ${amount.toFixed(2)}`;
+}
+
+/**
+ * "Resets May 1" — first day of the next calendar month, locale-formatted.
+ * Anthropic resets Enterprise credit pools on the first of the month, so the
+ * label is deterministic from `now` alone; the endpoint does not return a
+ * resets_at for credit responses.
+ */
+function buildCreditResetLabel(now: number): string {
+    const today = new Date(now);
+    // First-of-next-month in the user's local calendar. Date math handles year
+    // rollover automatically (December 1 → January 1).
+    const reset = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const formatted = new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+    }).format(reset);
+    return `Resets ${formatted}`;
+}
+
 // ── Main agent function ───────────────────────────────────────────────────────
 
 /**
  * Transform raw Anthropic usage data into a display-ready budget result.
  *
+ * Branches on `limits.kind`:
+ *   - 'session'     → session windows + zone from max(session, weekly) + status text
+ *   - 'credit'      → monthly spend + zone from utilizationPct + "$X of $Y spent"
+ *   - 'unsupported' → passthrough; the card renders a "not supported" message
+ *
  * @param limits  - Parsed response from /api/organizations/{orgId}/usage
  * @param now     - Current Unix ms timestamp (injectable for testability)
- * @returns       UsageBudgetResult ready for UsageBudgetCard to render
  */
 export function computeUsageBudget(limits: UsageLimitsData, now: number): UsageBudgetResult {
-    const sessionPct = limits.fiveHour.utilization;
-    const weeklyPct = limits.sevenDay.utilization;
+    if (limits.kind === 'session') {
+        const sessionPct = limits.fiveHour.utilization;
+        const weeklyPct = limits.sevenDay.utilization;
 
-    // Zone is driven by whichever window is more exhausted.
-    const zone = classifyZone(Math.max(sessionPct, weeklyPct));
+        // Zone is driven by whichever window is more exhausted.
+        const zone = classifyZone(Math.max(sessionPct, weeklyPct));
 
-    const sessionMinutesUntilReset = minutesUntilReset(limits.fiveHour.resetsAt, now);
-    const weeklyResetLabel = formatWeeklyResetLabel(limits.sevenDay.resetsAt);
-    const statusLabel = buildStatusLabel(sessionPct, sessionMinutesUntilReset, zone);
+        const sessionMinutesUntilReset = minutesUntilReset(limits.fiveHour.resetsAt, now);
+        const weeklyResetLabel = formatWeeklyResetLabel(limits.sevenDay.resetsAt);
+        const statusLabel = buildSessionStatusLabel(sessionPct, sessionMinutesUntilReset, zone);
 
-    return {
-        sessionPct,
-        weeklyPct,
-        sessionMinutesUntilReset,
-        weeklyResetLabel,
-        zone,
-        statusLabel,
-    };
+        const result: UsageBudgetSession = {
+            kind: 'session',
+            sessionPct,
+            weeklyPct,
+            sessionMinutesUntilReset,
+            weeklyResetLabel,
+            zone,
+            statusLabel,
+        };
+        return result;
+    }
+
+    if (limits.kind === 'credit') {
+        const zone = classifyZone(limits.utilizationPct);
+        const spent = formatCents(limits.usedCents, limits.currency);
+        const total = formatCents(limits.monthlyLimitCents, limits.currency);
+        const result: UsageBudgetCredit = {
+            kind: 'credit',
+            monthlyLimitCents: limits.monthlyLimitCents,
+            usedCents: limits.usedCents,
+            utilizationPct: limits.utilizationPct,
+            currency: limits.currency,
+            resetLabel: buildCreditResetLabel(now),
+            zone,
+            statusLabel: `${spent} of ${total} spent`,
+        };
+        return result;
+    }
+
+    // Unsupported account type: nothing to compute. The card branches on this
+    // kind and renders an explicit "can't read this account" message.
+    return { kind: 'unsupported' };
+}
+
+// ── Delta tracking helper ─────────────────────────────────────────────────────
+
+/**
+ * Return the percentage value the content script should track turn-over-turn
+ * for delta computation. Session tier tracks the 5-hour window; credit tier
+ * tracks monthly utilization. The label changes (% of session vs % of monthly)
+ * but the math is the same — subtract before from after to get the cost of one
+ * message in tier-appropriate units.
+ *
+ * Typed to reject the unsupported variant: there is nothing to track when the
+ * endpoint shape was unrecognized, and forcing the caller to gate first keeps
+ * the helper itself total.
+ */
+export function getTrackedUtilization(budget: UsageBudgetSession | UsageBudgetCredit): number {
+    return budget.kind === 'session' ? budget.sessionPct : budget.utilizationPct;
 }

@@ -64,10 +64,11 @@ export default function App() {
             )}
 
             {/* Usage Budget: live session data. budget is null when !isClaudeTab
-                (cleared by useDashboardData); UsageBudgetCard renders its own
-                empty state when budget is null. */}
+                (cleared by useDashboardData); UsageBudgetCard branches on the
+                tier variant (session/credit/unsupported) and chooses the
+                empty-state copy from `isClaudeTab`. */}
             <CollapsibleSection title="Usage Budget" storageKey="budget" defaultOpen>
-                <UsageBudgetCard budget={budget} />
+                <UsageBudgetCard budget={budget} isClaudeTab={isClaudeTab} />
             </CollapsibleSection>
 
             <CollapsibleSection title="Active Conversation" storageKey="active" defaultOpen>

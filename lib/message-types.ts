@@ -234,13 +234,50 @@ export interface UsageLimitWindow {
  * Structured usage data fetched from /api/organizations/{orgId}/usage.
  * Stored as `usageLimits:{accountId}` in chrome.storage.local.
  * Overwritten on each fetch; not appended.
+ *
+ * Discriminated by `kind` because the endpoint returns three different shapes
+ * depending on the account tier. Personal/Pro/Max see session + weekly windows;
+ * Enterprise sees a monthly credit pool under `extra_usage`; some account types
+ * (e.g. Teams without usage exposure) return a 200 with neither shape and
+ * land as `unsupported`. The parser (lib/usage-limits-parser.ts) is the only
+ * code that produces these values; everything downstream branches on `kind`.
  */
-export interface UsageLimitsData {
+export type UsageLimitsData = UsageLimitsSession | UsageLimitsCredit | UsageLimitsUnsupported;
+
+/** Personal / Pro / Max / Team. Session + weekly rolling windows. */
+export interface UsageLimitsSession {
+    kind: 'session';
     /** 5-hour rolling session window. "Current session" on the Usage page. */
     fiveHour: UsageLimitWindow;
     /** 7-day rolling window. "Weekly limits" on the Usage page. */
     sevenDay: UsageLimitWindow;
     /** Unix ms timestamp of when this record was fetched. Used to detect stale data. */
+    capturedAt: number;
+}
+
+/**
+ * Enterprise. Monthly credit pool exposed under `extra_usage`.
+ * `monthlyLimitCents` and `usedCents` are integers in cents (50000 = $500.00).
+ * Currency is whatever the endpoint reports (USD on every Enterprise account
+ * we have observed, but stored verbatim so the UI never has to guess).
+ */
+export interface UsageLimitsCredit {
+    kind: 'credit';
+    monthlyLimitCents: number;
+    usedCents: number;
+    /** 0-100. Endpoint computes this server-side; we pass it through. */
+    utilizationPct: number;
+    currency: string;
+    capturedAt: number;
+}
+
+/**
+ * Endpoint returned 200 but neither the session shape nor the credit shape
+ * was recognizable. Surfaced so the dashboard can tell the user we cannot
+ * read their usage instead of silently rendering empty bars.
+ */
+export interface UsageLimitsUnsupported {
+    kind: 'unsupported';
     capturedAt: number;
 }
 
@@ -255,8 +292,16 @@ export type BudgetZone = 'comfortable' | 'moderate' | 'tight' | 'critical';
  * Output of the Usage Budget Agent (lib/usage-budget.ts).
  * All derived from UsageLimitsData; no estimation, no velocity.
  * Every value is either exact (from the endpoint) or clearly labeled as unavailable.
+ *
+ * Discriminated on `kind` to mirror UsageLimitsData. Each variant is a complete
+ * render contract for one account tier. Components narrow on `kind` and read
+ * only the fields that exist on that variant.
  */
-export interface UsageBudgetResult {
+export type UsageBudgetResult = UsageBudgetSession | UsageBudgetCredit | UsageBudgetUnsupported;
+
+/** Session-tier render contract: the original Pro/Personal layout, unchanged. */
+export interface UsageBudgetSession {
+    kind: 'session';
     /** Session utilization as a percentage (0-100). Matches Settings > Usage exactly. */
     sessionPct: number;
     /** Weekly utilization as a percentage (0-100). Matches Settings > Usage exactly. */
@@ -271,20 +316,75 @@ export interface UsageBudgetResult {
     statusLabel: string;
 }
 
+/**
+ * Credit-tier render contract: Enterprise monthly spend.
+ * Cents are kept as integers; the UI formats them via the currency code at render time.
+ */
+export interface UsageBudgetCredit {
+    kind: 'credit';
+    monthlyLimitCents: number;
+    usedCents: number;
+    /** 0-100. Drives the single spend bar. */
+    utilizationPct: number;
+    /** ISO 4217 currency code from the endpoint (e.g. "USD"). */
+    currency: string;
+    /** "Resets May 1" — first day of next calendar month, locale-formatted. */
+    resetLabel: string;
+    /** Zone derived from utilizationPct. Drives bar color even though there is no second window. */
+    zone: BudgetZone;
+    /** One-liner for the card's primary text. E.g. "$304.91 of $500.00 spent". */
+    statusLabel: string;
+}
+
+/**
+ * Unsupported-tier render contract. No values to surface; the card renders an
+ * explicit "we can't read this account type" message instead of empty bars.
+ */
+export interface UsageBudgetUnsupported {
+    kind: 'unsupported';
+}
+
 // ── Usage Limits Bridge Messages ──────────────────────────────────────────────
 
 /**
  * Posted from the content script to the background when usage data is fetched.
  * The content script fetches /api/organizations/{orgId}/usage directly
  * (same session cookies, no auth needed) and forwards the parsed result here.
+ *
+ * Discriminated on `kind` so the background handler can rebuild the matching
+ * UsageLimitsData variant without having to re-parse the raw response. The
+ * content script has already done the parsing; this message is the wire format
+ * carrying the typed result across the runtime boundary.
  */
-export interface StoreUsageLimitsMessage {
+export type StoreUsageLimitsMessage =
+    | StoreUsageLimitsSessionMessage
+    | StoreUsageLimitsCreditMessage
+    | StoreUsageLimitsUnsupportedMessage;
+
+export interface StoreUsageLimitsSessionMessage {
     type: 'STORE_USAGE_LIMITS';
+    kind: 'session';
     organizationId: string;
     fiveHourUtilization: number;
     fiveHourResetsAt: string;
     sevenDayUtilization: number;
     sevenDayResetsAt: string;
+}
+
+export interface StoreUsageLimitsCreditMessage {
+    type: 'STORE_USAGE_LIMITS';
+    kind: 'credit';
+    organizationId: string;
+    monthlyLimitCents: number;
+    usedCents: number;
+    utilizationPct: number;
+    currency: string;
+}
+
+export interface StoreUsageLimitsUnsupportedMessage {
+    type: 'STORE_USAGE_LIMITS';
+    kind: 'unsupported';
+    organizationId: string;
 }
 
 // ── Token Economics Messages ────────────────────────────────────────────────

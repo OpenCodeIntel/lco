@@ -778,10 +778,19 @@ describe('empty accountId throws', () => {
 
 describe('storeUsageLimits / getUsageLimits', () => {
     const makeLimits = (sessionPct: number, weeklyPct: number): UsageLimitsData => ({
+        kind: 'session',
         fiveHour: { utilization: sessionPct, resetsAt: '2026-04-07T01:00:00.000Z' },
         sevenDay: { utilization: weeklyPct, resetsAt: '2026-04-08T09:00:00.000Z' },
         capturedAt: Date.now(),
     });
+
+    // Helper: narrow without a cast. Every test in this block writes a session
+    // shape, so anything else coming back is a regression we want to crash on.
+    const expectSession = (record: UsageLimitsData | null) => {
+        expect(record?.kind).toBe('session');
+        if (record?.kind !== 'session') throw new Error('expected session variant');
+        return record;
+    };
 
     it('stores and retrieves usage limits for an account', async () => {
         const limits = makeLimits(11, 21);
@@ -799,9 +808,9 @@ describe('storeUsageLimits / getUsageLimits', () => {
         await storeUsageLimits(TEST_ORG, makeLimits(11, 21));
         const updated = makeLimits(44, 55);
         await storeUsageLimits(TEST_ORG, updated);
-        const result = await getUsageLimits(TEST_ORG);
-        expect(result?.fiveHour.utilization).toBe(44);
-        expect(result?.sevenDay.utilization).toBe(55);
+        const session = expectSession(await getUsageLimits(TEST_ORG));
+        expect(session.fiveHour.utilization).toBe(44);
+        expect(session.sevenDay.utilization).toBe(55);
     });
 
     it('isolates data between accounts (different org IDs)', async () => {
@@ -810,10 +819,10 @@ describe('storeUsageLimits / getUsageLimits', () => {
         await storeUsageLimits(orgA, makeLimits(10, 20));
         await storeUsageLimits(orgB, makeLimits(80, 90));
 
-        const a = await getUsageLimits(orgA);
-        const b = await getUsageLimits(orgB);
-        expect(a?.fiveHour.utilization).toBe(10);
-        expect(b?.fiveHour.utilization).toBe(80);
+        const a = expectSession(await getUsageLimits(orgA));
+        const b = expectSession(await getUsageLimits(orgB));
+        expect(a.fiveHour.utilization).toBe(10);
+        expect(b.fiveHour.utilization).toBe(80);
     });
 
     it('uses the correct storage key format usageLimits:{accountId}', async () => {
@@ -835,6 +844,59 @@ describe('storeUsageLimits / getUsageLimits', () => {
         await expect(
             getUsageLimits(''),
         ).rejects.toThrow('[LCO] accountId required for scoped storage key');
+    });
+
+    // ── Tier variants (GET-20) ────────────────────────────────────────────────
+    // The store is tier-agnostic: it persists whatever discriminated-union
+    // shape it was handed and returns it verbatim. The parser and the agent
+    // own correctness; the store only owns durability.
+
+    it('round-trips a credit-tier (Enterprise) record', async () => {
+        const credit: UsageLimitsData = {
+            kind: 'credit',
+            monthlyLimitCents: 50000,
+            usedCents: 30491,
+            utilizationPct: 60.982,
+            currency: 'USD',
+            capturedAt: 1_700_000_000_000,
+        };
+        await storeUsageLimits(TEST_ORG, credit);
+        const retrieved = await getUsageLimits(TEST_ORG);
+        expect(retrieved).toEqual(credit);
+    });
+
+    it('round-trips an unsupported-tier record', async () => {
+        const unsupported: UsageLimitsData = { kind: 'unsupported', capturedAt: 1_700_000_000_000 };
+        await storeUsageLimits(TEST_ORG, unsupported);
+        const retrieved = await getUsageLimits(TEST_ORG);
+        expect(retrieved).toEqual(unsupported);
+    });
+
+    // ── Legacy read shim ──────────────────────────────────────────────────────
+    // Records written before tier dispatch (GET-20) have no `kind` field. The
+    // session shape is the only one that ever made it to storage in that era,
+    // so we re-tag them on read and let the rest of the pipeline run normally.
+
+    it('upgrades an untagged legacy record to the session variant on read', async () => {
+        // Write a pre-GET-20 record straight into the mock (no `kind` field).
+        mockStore._raw[`usageLimits:${TEST_ORG}`] = {
+            fiveHour: { utilization: 33, resetsAt: '2026-04-07T01:00:00.000Z' },
+            sevenDay: { utilization: 44, resetsAt: '2026-04-08T09:00:00.000Z' },
+            capturedAt: 1_600_000_000_000,
+        };
+        const result = await getUsageLimits(TEST_ORG);
+        expect(result?.kind).toBe('session');
+        if (result?.kind !== 'session') throw new Error('expected session');
+        expect(result.fiveHour.utilization).toBe(33);
+        expect(result.sevenDay.utilization).toBe(44);
+    });
+
+    it('returns null for an untagged record that lacks the session shape', async () => {
+        // Defensive: nothing should ever write this shape, but if storage gets
+        // corrupted we drop it rather than guess.
+        mockStore._raw[`usageLimits:${TEST_ORG}`] = { something: 'else' };
+        const result = await getUsageLimits(TEST_ORG);
+        expect(result).toBeNull();
     });
 });
 

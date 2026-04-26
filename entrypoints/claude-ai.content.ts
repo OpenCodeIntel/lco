@@ -2,11 +2,12 @@
 // Thin orchestrator: validates bridge messages, drives state transitions, renders overlay.
 // All logic lives in imported modules; this file only wires them together.
 
-import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage, SetActiveConvMessage, StoreUsageLimitsMessage, UsageLimitsData, UsageBudgetResult } from '../lib/message-types';
+import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage, SetActiveConvMessage, StoreUsageLimitsMessage, UsageBudgetResult } from '../lib/message-types';
 import { LCO_NAMESPACE } from '../lib/message-types';
 import { isValidBridgeSchema } from '../lib/bridge-validation';
 import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation, applyDraftEstimate, clearDraftEstimate, applyUsageBudget } from '../lib/overlay-state';
-import { computeUsageBudget } from '../lib/usage-budget';
+import { computeUsageBudget, getTrackedUtilization } from '../lib/usage-budget';
+import { parseUsageResponse } from '../lib/usage-limits-parser';
 import { computePreSubmitEstimate } from '../lib/pre-submit';
 import { createOverlay } from '../ui/overlay';
 import { showEnableBanner } from '../ui/enable-banner';
@@ -79,31 +80,44 @@ async function fetchAndStoreUsageLimits(orgId: string): Promise<UsageBudgetResul
     try {
         const response = await fetch(`/api/organizations/${orgId}/usage`, { credentials: 'same-origin' });
         if (!response.ok) return null;
-        const data = await response.json() as {
-            five_hour?: { utilization?: number; resets_at?: string };
-            seven_day?: { utilization?: number; resets_at?: string };
-        };
-        const fiveHour = data.five_hour;
-        const sevenDay = data.seven_day;
-        if (
-            !fiveHour || typeof fiveHour.utilization !== 'number' || typeof fiveHour.resets_at !== 'string' ||
-            !sevenDay || typeof sevenDay.utilization !== 'number' || typeof sevenDay.resets_at !== 'string'
-        ) return null;
-        browser.runtime.sendMessage({
-            type: 'STORE_USAGE_LIMITS',
-            organizationId: orgId,
-            fiveHourUtilization: fiveHour.utilization,
-            fiveHourResetsAt: fiveHour.resets_at,
-            sevenDayUtilization: sevenDay.utilization,
-            sevenDayResetsAt: sevenDay.resets_at,
-        } satisfies StoreUsageLimitsMessage).catch(() => { /* non-critical */ });
-        const capturedAt = Date.now();
-        const limits: UsageLimitsData = {
-            fiveHour: { utilization: fiveHour.utilization, resetsAt: fiveHour.resets_at },
-            sevenDay: { utilization: sevenDay.utilization, resetsAt: sevenDay.resets_at },
-            capturedAt,
-        };
-        return computeUsageBudget(limits, capturedAt);
+        const rawJson: unknown = await response.json();
+
+        // The parser is the single source of tier dispatch. It returns null only
+        // when the body is not even an object we can inspect; in that case we
+        // pretend the request failed and leave any previous render in place.
+        const limits = parseUsageResponse(rawJson);
+        if (!limits) return null;
+
+        // Forward the typed result to the background. The kind discriminator
+        // tells the handler which UsageLimitsData variant to rebuild.
+        const storeMessage: StoreUsageLimitsMessage = limits.kind === 'session'
+            ? {
+                type: 'STORE_USAGE_LIMITS',
+                kind: 'session',
+                organizationId: orgId,
+                fiveHourUtilization: limits.fiveHour.utilization,
+                fiveHourResetsAt: limits.fiveHour.resetsAt,
+                sevenDayUtilization: limits.sevenDay.utilization,
+                sevenDayResetsAt: limits.sevenDay.resetsAt,
+            }
+            : limits.kind === 'credit'
+                ? {
+                    type: 'STORE_USAGE_LIMITS',
+                    kind: 'credit',
+                    organizationId: orgId,
+                    monthlyLimitCents: limits.monthlyLimitCents,
+                    usedCents: limits.usedCents,
+                    utilizationPct: limits.utilizationPct,
+                    currency: limits.currency,
+                }
+                : {
+                    type: 'STORE_USAGE_LIMITS',
+                    kind: 'unsupported',
+                    organizationId: orgId,
+                };
+        browser.runtime.sendMessage(storeMessage).catch(() => { /* non-critical */ });
+
+        return computeUsageBudget(limits, limits.kind === 'unsupported' ? Date.now() : limits.capturedAt);
     } catch {
         // Network errors are silently ignored; the dashboard shows stale data.
         return null;
@@ -291,11 +305,13 @@ async function initializeMonitoring(): Promise<void> {
 
                 // Fetch usage limits now that we have the org ID. Populates the
                 // Usage Budget card in the side panel and weekly bar on the overlay.
-                // Capture sessionPct as the initial before-snapshot so the first
-                // STREAM_COMPLETE can compute a delta.
+                // Capture the tier-appropriate utilization (session% on Pro,
+                // monthly% on Enterprise) as the initial before-snapshot so the
+                // first STREAM_COMPLETE can compute a delta in matching units.
+                // The unsupported variant has nothing to track or display.
                 fetchAndStoreUsageLimits(currentOrgId).then(budget => {
-                    if (budget !== null) {
-                        lastKnownUtilization = budget.sessionPct;
+                    if (budget !== null && budget.kind !== 'unsupported') {
+                        lastKnownUtilization = getTrackedUtilization(budget);
                         state = applyUsageBudget(state, budget);
                         overlay.render(state);
                     }
@@ -467,7 +483,13 @@ async function initializeMonitoring(): Promise<void> {
                 // fetchAndStoreUsageLimits catches all errors internally; it never
                 // throws. The .then() always runs.
                 fetchAndStoreUsageLimits(orgId).then(budgetAfter => {
-                    const utilizationAfter = budgetAfter?.sessionPct ?? null;
+                    // Tracked utilization is tier-aware: 5-hour session % on Pro,
+                    // monthly credit % on Enterprise. The unsupported variant has
+                    // nothing to track, so we leave the snapshot null and skip
+                    // the delta math entirely.
+                    const utilizationAfter = (budgetAfter !== null && budgetAfter.kind !== 'unsupported')
+                        ? getTrackedUtilization(budgetAfter)
+                        : null;
                     // Update the cached value so the next STREAM_COMPLETE has a
                     // fresh before-snapshot. Only update on valid (non-null) reads.
                     if (utilizationAfter !== null) {
@@ -488,7 +510,8 @@ async function initializeMonitoring(): Promise<void> {
 
                     // Apply fresh budget to overlay state. Combine with delta update in
                     // one state object so the render below covers both changes.
-                    if (budgetAfter !== null) {
+                    // Unsupported variants have no UI to render, so they never enter state.
+                    if (budgetAfter !== null && budgetAfter.kind !== 'unsupported') {
                         state = applyUsageBudget(state, budgetAfter);
                     }
 

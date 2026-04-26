@@ -5,19 +5,37 @@
 // page load and after each response, stored as usageLimits:{accountId}).
 // The numbers here match claude.ai/settings/limits exactly -- no estimation.
 //
-// Props: UsageBudgetResult from lib/usage-budget.ts (the Usage Budget Agent).
-// When budget is null, renders a placeholder prompt to load claude.ai.
+// Tier dispatch:
+//   - session     → original Pro/Personal/Max layout: session bar + weekly bar
+//   - credit      → Enterprise: a single monthly spend bar in dollars
+//   - unsupported → explicit "we can't read this account type" empty state
+//
+// Empty states:
+//   - !isClaudeTab && !budget → prompt the user to open claude.ai
+//   - isClaudeTab but no usable budget → tell them this account isn't supported
+//
+// Props: typed budget result from lib/usage-budget.ts plus the tab-awareness
+// flag from useDashboardData.ts. Components further down receive pre-computed
+// state and never touch chrome.* directly.
 
 import React from 'react';
-import type { UsageBudgetResult, BudgetZone } from '../../../lib/message-types';
+import type { UsageBudgetResult, UsageBudgetSession, UsageBudgetCredit, BudgetZone } from '../../../lib/message-types';
 import { classifyZone } from '../../../lib/usage-budget';
 
 interface Props {
     budget: UsageBudgetResult | null;
+    /**
+     * True when the active tab is on claude.ai. Drives the empty-state copy:
+     * off-tab users get a prompt to open claude.ai; on-tab users with no usable
+     * data get the "account type not supported" message.
+     */
+    isClaudeTab: boolean;
 }
 
-// Zone-to-label mapping for the dot and fills.
-// Mirrors the health dot pattern in ActiveConversation.tsx.
+// Zone-to-label mapping for the dot and fills. Mirrors the health dot
+// pattern in ActiveConversation.tsx. The credit variant replaces the zone
+// name with a tier label ("Enterprise") because the four-zone vocabulary
+// does not translate cleanly to a single monthly bar.
 const ZONE_LABELS: Record<BudgetZone, string> = {
     comfortable: 'Comfortable',
     moderate: 'Moderate',
@@ -25,8 +43,10 @@ const ZONE_LABELS: Record<BudgetZone, string> = {
     critical: 'Critical',
 };
 
-export default function UsageBudgetCard({ budget }: Props) {
-    if (!budget) {
+export default function UsageBudgetCard({ budget, isClaudeTab }: Props) {
+    // No data at all + the user is on a tab where we cannot fetch any.
+    // Surface the obvious next action rather than a silent empty card.
+    if (!budget && !isClaudeTab) {
         return (
             <div className="lco-dash-budget lco-dash-budget--empty">
                 <p className="lco-dash-placeholder">Open claude.ai to load usage data</p>
@@ -34,6 +54,28 @@ export default function UsageBudgetCard({ budget }: Props) {
         );
     }
 
+    // We are on claude.ai but the response did not match either tier shape we
+    // know about. This is the honest state for Teams accounts (and possibly
+    // future tiers): we fetched, parsed, and found nothing actionable. Better
+    // than silently rendering empty bars that look like a fresh session.
+    if (!budget || budget.kind === 'unsupported') {
+        return (
+            <div className="lco-dash-budget lco-dash-budget--empty">
+                <p className="lco-dash-placeholder">Saar can&apos;t read usage on this account type yet</p>
+            </div>
+        );
+    }
+
+    // Session and credit each get their own render path; the discriminator on
+    // `budget.kind` lets TypeScript narrow into the right field set.
+    return budget.kind === 'session'
+        ? <SessionBudget budget={budget} />
+        : <CreditBudget budget={budget} />;
+}
+
+// ── Session variant (Pro / Personal / Max) ───────────────────────────────────
+
+function SessionBudget({ budget }: { budget: UsageBudgetSession }) {
     const { sessionPct, weeklyPct, sessionMinutesUntilReset, weeklyResetLabel, zone, statusLabel } = budget;
 
     // Clamp to [0, 100] for the bar fill. The API returns 0-100 already, but
@@ -86,6 +128,46 @@ export default function UsageBudgetCard({ budget }: Props) {
             <div className="lco-dash-budget-resets">
                 <span>Session resets in {resetText}</span>
                 <span>Weekly resets {weeklyResetLabel}</span>
+            </div>
+        </div>
+    );
+}
+
+// ── Credit variant (Enterprise) ──────────────────────────────────────────────
+
+function CreditBudget({ budget }: { budget: UsageBudgetCredit }) {
+    const { utilizationPct, zone, statusLabel, resetLabel } = budget;
+    const safePct = Math.min(Math.max(utilizationPct, 0), 100);
+
+    return (
+        <div className="lco-dash-budget">
+            {/* Header: zone dot drives the bar color, but the label is the tier
+                name. "Comfortable / Moderate / Tight / Critical" applies to a
+                rolling window — for a monthly credit pool, the user just wants
+                to know what tier they're on. */}
+            <div className="lco-dash-budget-header">
+                <span className={`lco-dash-budget-dot lco-dash-budget-dot--${zone}`} />
+                <span className="lco-dash-budget-zone-label">Enterprise</span>
+            </div>
+
+            {/* Primary status line: "$304.91 of $500.00 spent" */}
+            <p className="lco-dash-budget-status">{statusLabel}</p>
+
+            {/* Single monthly spend bar */}
+            <div className="lco-dash-budget-row">
+                <span className="lco-dash-budget-row-label">Monthly</span>
+                <div className="lco-dash-budget-bar">
+                    <div
+                        className={`lco-dash-budget-fill lco-dash-budget-fill--${zone}`}
+                        style={{ transform: `scaleX(${safePct / 100})` }}
+                    />
+                </div>
+                <span className="lco-dash-budget-row-pct">{Math.round(safePct)}%</span>
+            </div>
+
+            {/* Reset line: "Resets May 1" */}
+            <div className="lco-dash-budget-resets">
+                <span>{resetLabel}</span>
             </div>
         </div>
     );

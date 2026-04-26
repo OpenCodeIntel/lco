@@ -730,12 +730,38 @@ export async function storeUsageLimits(accountId: string, limits: UsageLimitsDat
  * Returns null if no data has been stored yet (e.g. user has not loaded claude.ai
  * with the extension active since this feature shipped).
  *
+ * Forward-compatible read shim: records written before tier dispatch (GET-20)
+ * have no `kind` field. They are always the session shape (Pro/Personal was
+ * the only tier we wrote to storage), so we tag them in-memory as 'session'
+ * and return. Storage is left untouched; the next write overwrites with the
+ * fully-tagged shape, and the legacy record never leaks back out.
+ *
  * @param accountId - Organization UUID
  */
 export async function getUsageLimits(accountId: string): Promise<UsageLimitsData | null> {
     const key = usageLimitsKey(accountId);
     const data = await store().get(key);
-    return (data[key] as UsageLimitsData | undefined) ?? null;
+    const raw = data[key];
+    if (!raw || typeof raw !== 'object') return null;
+
+    const record = raw as Partial<UsageLimitsData> & {
+        fiveHour?: unknown;
+        sevenDay?: unknown;
+    };
+
+    // Already-tagged (session/credit/unsupported): return verbatim.
+    if (record.kind === 'session' || record.kind === 'credit' || record.kind === 'unsupported') {
+        return record as UsageLimitsData;
+    }
+
+    // Untagged legacy record: only the session shape was ever written. Detect
+    // it by the two windows and re-emit as a session variant. Anything else
+    // we cannot place gets dropped to null so downstream code does not have
+    // to defend against half-typed records.
+    if (record.fiveHour && record.sevenDay) {
+        return { ...(record as Omit<UsageLimitsData, 'kind'>), kind: 'session' } as UsageLimitsData;
+    }
+    return null;
 }
 
 // ── Usage delta log ───────────────────────────────────────────────────────────

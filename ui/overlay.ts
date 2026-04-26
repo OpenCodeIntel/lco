@@ -343,11 +343,16 @@ export function createOverlay(): OverlayHandle {
 
         if (elCurrentRequest && state.lastRequest) {
             const { inputTokens, outputTokens, cost } = state.lastRequest;
-            // Lead with exact session % when available (Anthropic endpoint, not estimated).
+            // Lead with exact tier-appropriate utilization when available
+            // (Anthropic endpoint, not estimated). The label tracks the budget
+            // variant so an Enterprise user sees "% of monthly" instead of the
+            // misleading "% of session" — the underlying number is monthly
+            // credit utilization on that tier.
             // Falls back to token/cost display when delta has not yet resolved.
             if (state.lastDeltaUtilization !== null) {
+                const window = state.usageBudget?.kind === 'credit' ? 'monthly' : 'session';
                 elCurrentRequest.textContent =
-                    `${state.lastDeltaUtilization.toFixed(1)}% of session · ${fmtCost(cost)}`;
+                    `${state.lastDeltaUtilization.toFixed(1)}% of ${window} · ${fmtCost(cost)}`;
             } else {
                 elCurrentRequest.textContent =
                     `~${fmt(inputTokens)} in · ~${fmt(outputTokens)} out · ${fmtCost(cost)}`;
@@ -410,11 +415,15 @@ export function createOverlay(): OverlayHandle {
         }
 
         if (elWeeklyRow && elWeeklyFill && elWeeklyLabel) {
+            // Only the session tier exposes a weekly window. On credit and
+            // unsupported variants the bar would be meaningless (Enterprise has
+            // a monthly pool surfaced in the side panel; unsupported has nothing
+            // to show), so we keep the row hidden in those cases.
             const budget = state.usageBudget;
-            const visible = budget !== null;
+            const visible = budget !== null && budget.kind === 'session';
             elWeeklyRow.style.display = visible ? '' : 'none';
             if (visible) {
-                const pct = Math.min(Math.max(budget!.weeklyPct, 0), 100);
+                const pct = Math.min(Math.max(budget.weeklyPct, 0), 100);
                 elWeeklyFill.style.transform = `scaleX(${pct / 100})`;
                 elWeeklyFill.className = `lco-bar-fill lco-bar-fill--${classifyZone(pct)}`;
                 elWeeklyLabel.textContent = `${Math.round(pct)}% weekly`;

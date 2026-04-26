@@ -389,14 +389,34 @@ export default defineBackground({
       // Usage limit data fetched from /api/organizations/{orgId}/usage by the content script.
       // Stored as usageLimits:{orgId} in chrome.storage.local (single record, overwritten).
       // Powers the Usage Budget card in the side panel dashboard.
+      //
+      // The content script has already classified the response into one of three
+      // tier variants. We rebuild the matching UsageLimitsData here rather than
+      // re-parsing the raw endpoint, which keeps the wire format strongly typed
+      // and the storage layer indifferent to which tier it is persisting.
       if (message.type === 'STORE_USAGE_LIMITS') {
-        const { organizationId, fiveHourUtilization, fiveHourResetsAt, sevenDayUtilization, sevenDayResetsAt } = message;
-        const limits: UsageLimitsData = {
-          fiveHour: { utilization: fiveHourUtilization, resetsAt: fiveHourResetsAt },
-          sevenDay: { utilization: sevenDayUtilization, resetsAt: sevenDayResetsAt },
-          capturedAt: Date.now(),
-        };
-        storeUsageLimits(organizationId, limits)
+        const capturedAt = Date.now();
+        let limits: UsageLimitsData;
+        if (message.kind === 'session') {
+          limits = {
+            kind: 'session',
+            fiveHour: { utilization: message.fiveHourUtilization, resetsAt: message.fiveHourResetsAt },
+            sevenDay: { utilization: message.sevenDayUtilization, resetsAt: message.sevenDayResetsAt },
+            capturedAt,
+          };
+        } else if (message.kind === 'credit') {
+          limits = {
+            kind: 'credit',
+            monthlyLimitCents: message.monthlyLimitCents,
+            usedCents: message.usedCents,
+            utilizationPct: message.utilizationPct,
+            currency: message.currency,
+            capturedAt,
+          };
+        } else {
+          limits = { kind: 'unsupported', capturedAt };
+        }
+        storeUsageLimits(message.organizationId, limits)
           .then(() => sendResponse({ ok: true }))
           .catch((err) => {
             console.error('[LCO-ERROR] Failed to store usage limits:', err);
