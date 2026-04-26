@@ -359,9 +359,10 @@ describe('background message contracts: lifecycle messages', () => {
 });
 
 describe('background message contracts: STORE_USAGE_LIMITS', () => {
-    it('carries all usage window fields', () => {
+    it('carries all usage window fields for the session variant', () => {
         const msg: StoreUsageLimitsMessage = {
             type: 'STORE_USAGE_LIMITS',
+            kind: 'session',
             organizationId: 'org-uuid',
             fiveHourUtilization: 34.5,
             fiveHourResetsAt: '2026-04-13T15:00:01.000+00:00',
@@ -369,7 +370,32 @@ describe('background message contracts: STORE_USAGE_LIMITS', () => {
             sevenDayResetsAt: '2026-04-16T09:00:01.000+00:00',
         };
         expect(msg.type).toBe('STORE_USAGE_LIMITS');
+        if (msg.kind !== 'session') throw new Error('expected session variant');
         expect(msg.fiveHourUtilization).toBe(34.5);
+    });
+
+    it('carries cents and currency for the credit variant', () => {
+        const msg: StoreUsageLimitsMessage = {
+            type: 'STORE_USAGE_LIMITS',
+            kind: 'credit',
+            organizationId: 'org-uuid',
+            monthlyLimitCents: 50000,
+            usedCents: 30491,
+            utilizationPct: 60.982,
+            currency: 'USD',
+        };
+        if (msg.kind !== 'credit') throw new Error('expected credit variant');
+        expect(msg.monthlyLimitCents).toBe(50000);
+        expect(msg.currency).toBe('USD');
+    });
+
+    it('has no payload beyond org for the unsupported variant', () => {
+        const msg: StoreUsageLimitsMessage = {
+            type: 'STORE_USAGE_LIMITS',
+            kind: 'unsupported',
+            organizationId: 'org-uuid',
+        };
+        expect(msg.kind).toBe('unsupported');
     });
 });
 

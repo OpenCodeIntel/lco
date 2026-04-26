@@ -3,7 +3,15 @@ import { describe, test, expect } from 'vitest';
 // Audit: lib/usage-budget.ts - zone classification, budget computation
 
 import { classifyZone, computeUsageBudget } from '../../lib/usage-budget';
-import type { UsageLimitsData } from '../../lib/message-types';
+import type { UsageLimitsData, UsageBudgetSession } from '../../lib/message-types';
+
+// Helper: every fixture in this file is a session-tier shape, so we narrow
+// once here and let the assertions read fields without re-checking `.kind`.
+function computeSession(limits: UsageLimitsData, now: number): UsageBudgetSession {
+    const result = computeUsageBudget(limits, now);
+    if (result.kind !== 'session') throw new Error(`expected session variant, got ${result.kind}`);
+    return result;
+}
 
 // ── classifyZone ───────────────────────────────────────────────────────────
 
@@ -41,6 +49,7 @@ describe('computeUsageBudget', () => {
         weeklyResetsAt: string;
     }> = {}): UsageLimitsData {
         return {
+            kind: 'session',
             fiveHour: {
                 utilization: overrides.sessionUtil ?? 20,
                 resetsAt: overrides.sessionResetsAt ?? '2026-04-13T14:00:00Z',
@@ -49,11 +58,12 @@ describe('computeUsageBudget', () => {
                 utilization: overrides.weeklyUtil ?? 10,
                 resetsAt: overrides.weeklyResetsAt ?? '2026-04-16T00:00:00Z',
             },
-        } as UsageLimitsData;
+            capturedAt: now,
+        };
     }
 
     test('basic output shape', () => {
-        const result = computeUsageBudget(makeLimits(), now);
+        const result = computeSession(makeLimits(), now);
         expect(result.sessionPct).toBe(20);
         expect(result.weeklyPct).toBe(10);
         expect(typeof result.sessionMinutesUntilReset).toBe('number');
@@ -63,32 +73,32 @@ describe('computeUsageBudget', () => {
     });
 
     test('zone is driven by the max of session and weekly', () => {
-        const result = computeUsageBudget(makeLimits({ sessionUtil: 30, weeklyUtil: 80 }), now);
+        const result = computeSession(makeLimits({ sessionUtil: 30, weeklyUtil: 80 }), now);
         expect(result.zone).toBe('tight'); // 80% => tight
     });
 
     test('session minutes calculation', () => {
         // Reset at 14:00, now at 12:00 -> 120 minutes
-        const result = computeUsageBudget(makeLimits(), now);
+        const result = computeSession(makeLimits(), now);
         expect(result.sessionMinutesUntilReset).toBe(120);
     });
 
     test('session minutes never negative', () => {
         // Reset time in the past
-        const result = computeUsageBudget(makeLimits({
+        const result = computeSession(makeLimits({
             sessionResetsAt: '2026-04-13T11:00:00Z',
         }), now);
         expect(result.sessionMinutesUntilReset).toBe(0);
     });
 
     test('status label for comfortable zone', () => {
-        const result = computeUsageBudget(makeLimits({ sessionUtil: 11 }), now);
+        const result = computeSession(makeLimits({ sessionUtil: 11 }), now);
         expect(result.statusLabel).toMatch(/11% used/);
         expect(result.statusLabel).toMatch(/resets in/);
     });
 
     test('status label for critical zone', () => {
-        const result = computeUsageBudget(makeLimits({ sessionUtil: 94, weeklyUtil: 94 }), now);
+        const result = computeSession(makeLimits({ sessionUtil: 94, weeklyUtil: 94 }), now);
         expect(result.statusLabel).toMatch(/94% used/);
         expect(result.statusLabel).toMatch(/nearly exhausted/);
     });
