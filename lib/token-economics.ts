@@ -1,7 +1,7 @@
 // lib/token-economics.ts
 // Pure agent: derives median token-to-session-% ratios, grouped by model.
 //
-// Architecture position: lib/ agent layer. Pure functions only — no DOM, no chrome.*, no storage.
+// Architecture position: lib/ agent layer. Pure functions only; no DOM, no chrome.*, no storage.
 // Input:  UsageDelta[] from getUsageDeltas() in lib/conversation-store.ts
 // Output: TokenEconomicsResult (three Maps keyed by model string)
 // Called by: entrypoints/sidepanel/hooks/useDashboardData.ts (loadTokenEconomics)

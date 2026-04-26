@@ -328,7 +328,7 @@ export interface UsageBudgetCredit {
     utilizationPct: number;
     /** ISO 4217 currency code from the endpoint (e.g. "USD"). */
     currency: string;
-    /** "Resets May 1" — first day of next calendar month, locale-formatted. */
+    /** "Resets May 1": first day of next calendar month, locale-formatted. */
     resetLabel: string;
     /** Zone derived from utilizationPct. Drives bar color even though there is no second window. */
     zone: BudgetZone;

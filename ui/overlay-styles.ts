@@ -18,11 +18,11 @@ export const OVERLAY_CSS = `
   --lco-warn-bg:      rgba(245, 158, 11, 0.09);
 
   /* Dark mode (default on claude.ai) */
-  --lco-bg:           rgba(30, 30, 28, 0.92);   /* was .82 — prevents muted text failing on light page content bleedthrough */
+  --lco-bg:           rgba(30, 30, 28, 0.92);   /* was .82; prevents muted text failing on light page content bleedthrough */
   --lco-bg-hover:     rgba(38, 38, 36, 0.95);
   --lco-text:         #d4d4d8;
-  --lco-muted:        #8a8a93;                  /* was #71717a — bumped for WCAG AA headroom (~5.8:1 on dark surface) */
-  --lco-border:       rgba(255, 255, 255, 0.12); /* was .06 — invisible on claude.ai dark panels */
+  --lco-muted:        #8a8a93;                  /* was #71717a; bumped for WCAG AA headroom (~5.8:1 on dark surface) */
+  --lco-border:       rgba(255, 255, 255, 0.12); /* was .06; invisible on claude.ai dark panels */
   --lco-border-hover: rgba(255, 255, 255, 0.18);
 
   -webkit-font-smoothing: antialiased;
@@ -34,7 +34,7 @@ export const OVERLAY_CSS = `
     --lco-bg:           rgba(244, 243, 238, 0.92); /* matched to dark mode .92 floor */
     --lco-bg-hover:     rgba(238, 236, 230, 0.95);
     --lco-text:         #27272a;
-    --lco-muted:        #6b7280;                  /* was #a1a1aa (~3.2:1 fail on warm cream) — gray-500 gives ~4.8:1 AA */
+    --lco-muted:        #6b7280;                  /* was #a1a1aa (~3.2:1 fail on warm cream); gray-500 gives ~4.8:1 AA */
     --lco-accent:       #b35a34;
     --lco-bar-fill:     #b35a34;
     --lco-bar-glow:     rgba(179, 90, 52, 0.20);
@@ -42,7 +42,7 @@ export const OVERLAY_CSS = `
     --lco-warn-fill:    #d97706;
     --lco-warn-glow:    rgba(217, 119, 6, 0.20);
     --lco-warn-bg:      rgba(217, 119, 6, 0.08);
-    --lco-border:       rgba(0, 0, 0, 0.08);      /* was .06 — widget edge was missing in light mode */
+    --lco-border:       rgba(0, 0, 0, 0.08);      /* was .06; widget edge was missing in light mode */
     --lco-border-hover: rgba(0, 0, 0, 0.14);
   }
 }
@@ -292,7 +292,7 @@ export const OVERLAY_CSS = `
   outline-offset: 2px;
 }
 
-/* Critical state: filled button — more urgent than the outline used at degrading */
+/* Critical state: filled button, more urgent than the outline used at degrading */
 .lco-start-fresh--critical {
   background: #c15f3c;
   color: rgba(255, 255, 255, 0.92);
@@ -391,7 +391,7 @@ export const OVERLAY_CSS = `
   animation: lco-nudge-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-.lco-nudge--info     { background: rgba(107, 140, 174, 0.09); border-left: 2px solid #6b8cae; } /* desaturated steel from terracotta undertones — no pure blue in palette */
+.lco-nudge--info     { background: rgba(107, 140, 174, 0.09); border-left: 2px solid #6b8cae; } /* desaturated steel from terracotta undertones; no pure blue in palette */
 .lco-nudge--warning  { background: rgba(245, 158,  11, 0.11); border-left: 2px solid #f59e0b; }
 .lco-nudge--critical { background: rgba(239,  68,  68, 0.11); border-left: 2px solid #ef4444; }
 

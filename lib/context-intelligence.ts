@@ -2,7 +2,7 @@
 // Pure context analysis: no DOM refs, no chrome APIs, no side effects.
 // Analyzes ConversationState and returns ContextSignal[] for the nudge system.
 
-// Threshold constants — never use magic numbers in callers.
+// Threshold constants. Never use magic numbers in callers.
 export const CONTEXT_THRESHOLD_INFO     = 60;  // % at which responses start losing early details
 export const CONTEXT_THRESHOLD_WARNING  = 75;  // % at which a new conversation is advisable
 export const CONTEXT_THRESHOLD_CRITICAL = 90;  // % at which degradation is near-certain
@@ -57,7 +57,7 @@ export function analyzeContext(state: ConversationState): ContextSignal[] {
     const signals: ContextSignal[] = [];
     const { contextPct, turnCount, contextHistory } = state;
 
-    // 1. Threshold alerts — only the highest applicable severity fires.
+    // 1. Threshold alerts: only the highest applicable severity fires.
     if (contextPct >= CONTEXT_THRESHOLD_CRITICAL) {
         signals.push({
             type: 'threshold',
@@ -81,7 +81,7 @@ export function analyzeContext(state: ConversationState): ContextSignal[] {
         });
     }
 
-    // 2. Growth rate warning — fires when average upward growth exceeds threshold.
+    // 2. Growth rate warning: fires when average upward growth exceeds threshold.
     const avgGrowth = computeAverageGrowth(contextHistory);
     if (avgGrowth !== null && avgGrowth > GROWTH_RATE_WARN_PCT) {
         const remaining = Math.max(0, Math.round((100 - contextPct) / avgGrowth));
@@ -93,7 +93,7 @@ export function analyzeContext(state: ConversationState): ContextSignal[] {
         });
     }
 
-    // 3. Stale conversation — long thread with substantial context consumption.
+    // 3. Stale conversation: long thread with substantial context consumption.
     if (turnCount > STALE_MIN_TURNS && contextPct > STALE_MIN_CONTEXT_PCT) {
         signals.push({
             type: 'stale_conversation',
@@ -103,7 +103,7 @@ export function analyzeContext(state: ConversationState): ContextSignal[] {
         });
     }
 
-    // 4. Project hint — ongoing work pattern: enough turns, meaningful context, net growth.
+    // 4. Project hint: ongoing work pattern with enough turns, meaningful context, and net growth.
     if (turnCount > PROJECT_HINT_MIN_TURNS && contextPct >= PROJECT_HINT_MIN_CONTEXT_PCT) {
         const netGrowth = contextHistory.length >= 2
             ? contextHistory[contextHistory.length - 1] - contextHistory[0]

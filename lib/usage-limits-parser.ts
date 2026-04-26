@@ -26,7 +26,7 @@
 
 import type { UsageLimitsData } from './message-types';
 
-// ── Raw endpoint shape (defensive — every field optional) ─────────────────────
+// ── Raw endpoint shape (defensive: every field optional) ─────────────────────
 // We deliberately type these as `unknown`-friendly: a field may be missing,
 // null, or the wrong type. The dispatch helpers below validate what they need.
 

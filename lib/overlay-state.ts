@@ -11,7 +11,7 @@ import type { PreSubmitEstimate } from './pre-submit';
 
 /**
  * Renderable budget variants only. The unsupported variant has nothing for
- * the in-page overlay to draw, so it never reaches state — the content
+ * the in-page overlay to draw, so it never reaches state: the content
  * script gates the call before applyUsageBudget runs.
  */
 export type RenderableBudget = UsageBudgetSession | UsageBudgetCredit;

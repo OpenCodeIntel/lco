@@ -1,8 +1,8 @@
 // ui/overlay.ts
 // Overlay DOM factory. No knowledge of message types, chrome APIs, or business logic.
 // createOverlay() returns a handle with two methods:
-//   mount(shadow)  — builds the DOM tree inside the given shadow root (call once)
-//   render(state)  — reflects OverlayState onto the DOM (safe to call before mount)
+//   mount(shadow)  : builds the DOM tree inside the given shadow root (call once)
+//   render(state)  : reflects OverlayState onto the DOM (safe to call before mount)
 
 import { OVERLAY_CSS } from './overlay-styles';
 import type { OverlayState } from '../lib/overlay-state';
@@ -29,7 +29,7 @@ function fmtCost(c: number | null): string {
 }
 
 export function createOverlay(): OverlayHandle {
-    // DOM refs — null until mount() is called. render() is a no-op until then.
+    // DOM refs: null until mount() is called. render() is a no-op until then.
     let overlayWidget: HTMLDivElement | null = null;
     let elCurrentRequest: HTMLElement | null = null;
     let elHealthRow: HTMLElement | null = null;
@@ -72,7 +72,7 @@ export function createOverlay(): OverlayHandle {
         widget.style.display = 'none'; // hidden until first TOKEN_BATCH
         overlayWidget = widget;
 
-        // Header — always visible, click to collapse/expand
+        // Header: always visible, click to collapse/expand
         const header = document.createElement('div');
         header.className = 'lco-header';
 
@@ -85,7 +85,7 @@ export function createOverlay(): OverlayHandle {
         costMini.style.display = 'none'; // shown only when collapsed
         elCostMini = costMini;
 
-        // Health dot shown in collapsed pill — sole health signal when minimized.
+        // Health dot shown in collapsed pill: sole health signal when minimized.
         const healthDotMini = document.createElement('span');
         healthDotMini.className = 'lco-health-dot';
         healthDotMini.style.display = 'none';
@@ -96,7 +96,7 @@ export function createOverlay(): OverlayHandle {
         header.appendChild(healthDotMini);
         widget.appendChild(header);
 
-        // Body — collapsible
+        // Body: collapsible
         const body = document.createElement('div');
         body.className = 'lco-body';
 
@@ -216,7 +216,7 @@ export function createOverlay(): OverlayHandle {
         limitRow.appendChild(limitLabel);
         body.appendChild(limitRow);
 
-        // Weekly cap bar — hidden until usageBudget is available
+        // Weekly cap bar: hidden until usageBudget is available
         const weeklyRow = document.createElement('div');
         weeklyRow.className = 'lco-bar-row lco-weekly-row';
         weeklyRow.style.display = 'none';
@@ -236,14 +236,14 @@ export function createOverlay(): OverlayHandle {
         weeklyRow.appendChild(weeklyLabel);
         body.appendChild(weeklyRow);
 
-        // Divider — hidden until first request completes
+        // Divider: hidden until first request completes
         const divider = document.createElement('div');
         divider.className = 'lco-divider';
         divider.style.display = 'none';
         elDivider = divider;
         body.appendChild(divider);
 
-        // Session row — hidden until first request completes
+        // Session row: hidden until first request completes
         const rowSession = document.createElement('div');
         rowSession.className = 'lco-row';
         rowSession.style.display = 'none';
@@ -280,7 +280,7 @@ export function createOverlay(): OverlayHandle {
         nudge.appendChild(nudgeDismiss);
         body.appendChild(nudge);
 
-        // Health warning — hidden by default
+        // Health warning: hidden by default
         const health = document.createElement('div');
         health.className = 'lco-health';
         health.style.display = 'none';
@@ -290,7 +290,7 @@ export function createOverlay(): OverlayHandle {
         widget.appendChild(body);
         shadow.appendChild(widget);
 
-        // Collapse/expand toggle — DOM-only concern, lives here
+        // Collapse/expand toggle: DOM-only concern, lives here
         let collapsed = false;
         header.addEventListener('click', () => {
             collapsed = !collapsed;
@@ -351,7 +351,7 @@ export function createOverlay(): OverlayHandle {
             // Lead with exact tier-appropriate utilization when available
             // (Anthropic endpoint, not estimated). The label tracks the budget
             // variant so an Enterprise user sees "% of monthly" instead of the
-            // misleading "% of session" — the underlying number is monthly
+            // misleading "% of session": the underlying number is monthly
             // credit utilization on that tier.
             // Falls back to token/cost display when delta has not yet resolved.
             if (state.lastDeltaUtilization !== null) {
@@ -456,7 +456,7 @@ export function createOverlay(): OverlayHandle {
         }
 
         // Collapsed pill: show session total (not last reply cost).
-        // Cost color stays terra cotta regardless of health state — dot is the sole health signal.
+        // Cost color stays terra cotta regardless of health state: dot is the sole health signal.
         if (elCostMini && state.session.requestCount > 0) {
             elCostMini.textContent = fmtCost(state.session.totalCost);
         }

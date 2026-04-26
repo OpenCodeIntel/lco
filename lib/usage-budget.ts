@@ -13,7 +13,7 @@
 //   The endpoint exposes a different shape per account tier (see
 //   lib/usage-limits-parser.ts). This agent branches on `limits.kind` and
 //   returns the matching UsageBudgetResult variant. Render code never
-//   computes its own status text or zone — every label that ends up on the
+//   computes its own status text or zone: every label that ends up on the
 //   user's screen comes from here.
 //
 // Design principles (mirrors all other lib/ agents):
@@ -116,7 +116,7 @@ function buildSessionStatusLabel(sessionPct: number, sessionMinutes: number, zon
 // ── Credit-tier helpers ──────────────────────────────────────────────────────
 
 // `Intl.NumberFormat` constructors are not free; on a hot card render we would
-// build two per call (used + monthly). Cache by currency code — the same code
+// build two per call (used + monthly). Cache by currency code: the same code
 // is reused across renders for one account, and the cache is bounded by the
 // number of currencies Anthropic actually returns (one per account, ever).
 // `null` marks codes Intl rejected so we do not retry the constructor.
@@ -154,7 +154,7 @@ function formatCents(cents: number, currency: string): string {
 }
 
 /**
- * "Resets May 1" — first day of the next calendar month, locale-formatted.
+ * "Resets May 1": first day of the next calendar month, locale-formatted.
  * Anthropic resets Enterprise credit pools on the first of the month, so the
  * label is deterministic from `now` alone; the endpoint does not return a
  * resets_at for credit responses.
@@ -236,7 +236,7 @@ export function computeUsageBudget(limits: UsageLimitsData, now: number): UsageB
  * Return the percentage value the content script should track turn-over-turn
  * for delta computation. Session tier tracks the 5-hour window; credit tier
  * tracks monthly utilization. The label changes (% of session vs % of monthly)
- * but the math is the same — subtract before from after to get the cost of one
+ * but the math is the same: subtract before from after to get the cost of one
  * message in tier-appropriate units.
  *
  * Typed to reject the unsupported variant: there is nothing to track when the
