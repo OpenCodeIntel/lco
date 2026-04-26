@@ -87,7 +87,7 @@ function turnHasDelta(turn: TurnRecord): turn is TurnRecord & { deltaUtilization
  * Suppressed when either turn is missing or when the move is below 0.01%
  * of session, which is below the noise floor of our tokenizer estimate.
  */
-function computeTrend(previous: number | null, current: number | null): { direction: 'up' | 'down'; percent: number } | null {
+export function computeTrend(previous: number | null, current: number | null): { direction: 'up' | 'down'; percent: number } | null {
     if (previous === null || current === null) return null;
     const change = current - previous;
     if (Math.abs(change) < 0.01) return null;
