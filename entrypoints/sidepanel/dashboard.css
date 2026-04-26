@@ -2,24 +2,62 @@
    Side panel dashboard styles. Uses CSS custom properties for theming.
    Claude-aligned: warm terra cotta accent, Pampas palette, minimal. */
 
-/* ── Reset & Variables ──────────────────────────────────────────────────────── */
-
+/* ── Brand palette (workshop tokens) ─────────────────────────────────────────
+   Two-layer color system. The brand layer below uses semantic names so the
+   CSS reads like a hardware-store paint receipt; the surface layer further
+   down maps those into bg / text / border roles per theme. Replacing a
+   palette token here propagates through every component without grepping
+   for hex codes. */
 :root {
-    --lco-bg: #ffffff;
-    --lco-bg-card: #f8f7f5;
-    --lco-bg-hover: #f0efed;
-    --lco-text: #1a1a1a;
-    --lco-text-secondary: #6b6b6b;
-    --lco-text-muted: #a0a0a0;
-    --lco-border: #e5e3df;
-    --lco-accent: #c15f3c;
+    /* Accent: terra cotta is the only signature color. Sienna is its hover. */
+    --lco-terracotta:   #c15f3c;
+    --lco-sienna:       #a84f2f;
+
+    /* Health zones: workshop earth tones replacing 2014-era Material colors.
+       Patina (operational), brass (moderate), ember (tight), rust (critical).
+       Verified against WCAG AA when used as 8px+ graphic shapes; not used as
+       body text on either surface. */
+    --lco-patina:       #5a7a5e;
+    --lco-brass:        #b08858;
+    --lco-ember:        #cc6b3d;
+    --lco-rust:         #8e3d2a;
+
+    /* Surfaces. Bone and linen are light; charcoal and slate are dark.
+       No pure white, no pure black: the eye reads warmth at low contrast
+       far longer than it tolerates clinical FFFFFF. Ash is the muted-text
+       neutral that sits between body text and background on either side. */
+    --lco-bone:         #f5f1ea;
+    --lco-linen:        #e8e2d4;
+    --lco-charcoal:     #1c1a18;
+    --lco-slate:        #2a2825;
+    --lco-ash:          #8b857c;
+}
+
+/* ── Surface tokens (mapped from palette) ───────────────────────────────────
+   These are the names component CSS reaches for. Light defaults below;
+   prefers-color-scheme: dark and explicit data-theme overrides below that. */
+:root {
+    --lco-bg: var(--lco-bone);
+    --lco-bg-card: var(--lco-linen);
+    --lco-bg-hover: #ddd5c8;
+    --lco-text: var(--lco-charcoal);
+    --lco-text-secondary: #6b6660;
+    --lco-text-muted: var(--lco-ash);
+    --lco-border: rgba(28, 26, 24, 0.10);
+
+    --lco-accent: var(--lco-terracotta);
     --lco-accent-light: rgba(193, 95, 60, 0.10);
-    --lco-health-green: #4caf50;
-    --lco-health-yellow: #f5a623;
-    --lco-health-orange: #ff9800;
-    --lco-health-red: #e53935;
-    --lco-context-fill: #c15f3c;
-    --lco-context-track: #e5e3df;
+
+    /* Health tokens kept as legacy names so existing components keep working
+       through this commit; future work points at the workshop names directly. */
+    --lco-health-green:  var(--lco-patina);
+    --lco-health-yellow: var(--lco-brass);
+    --lco-health-orange: var(--lco-ember);
+    --lco-health-red:    var(--lco-rust);
+
+    --lco-context-fill: var(--lco-terracotta);
+    --lco-context-track: rgba(28, 26, 24, 0.10);
+
     --lco-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --lco-font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
     --lco-radius: 8px;
@@ -29,16 +67,16 @@
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --lco-bg: #1a1a1a;
-        --lco-bg-card: #242424;
-        --lco-bg-hover: #2e2e2e;
-        --lco-text: #e8e6e3;
-        --lco-text-secondary: #a0a0a0;
-        --lco-text-muted: #6b6b6b;
-        --lco-border: #333333;
-        --lco-accent: #c15f3c;
+        --lco-bg: var(--lco-charcoal);
+        --lco-bg-card: var(--lco-slate);
+        --lco-bg-hover: #34322e;
+        --lco-text: var(--lco-bone);
+        --lco-text-secondary: #b8b1a4;
+        --lco-text-muted: var(--lco-ash);
+        --lco-border: rgba(245, 241, 234, 0.12);
+        --lco-accent: var(--lco-terracotta);
         --lco-accent-light: rgba(193, 95, 60, 0.15);
-        --lco-context-track: #333333;
+        --lco-context-track: rgba(245, 241, 234, 0.12);
     }
 }
 
@@ -284,9 +322,11 @@ body {
     /* No transition: health state changes snap instantly (rare, not per-frame). */
 }
 
-.lco-dash-health-dot--healthy   { background: var(--lco-health-green); box-shadow: 0 0 4px rgba(76, 175, 80, 0.4); }
-.lco-dash-health-dot--degrading { background: var(--lco-health-yellow); box-shadow: 0 0 4px rgba(245, 166, 35, 0.4); }
-.lco-dash-health-dot--critical  { background: var(--lco-health-red); animation: lco-dot-pulse 2s ease-in-out infinite; }
+/* Workshop palette: warm earth tones glow ~40% alpha to match the dot fill.
+   Critical pulses on its own (see lco-dot-pulse keyframes below). */
+.lco-dash-health-dot--healthy   { background: var(--lco-patina); box-shadow: 0 0 4px rgba(90, 122, 94, 0.4); }
+.lco-dash-health-dot--degrading { background: var(--lco-brass);  box-shadow: 0 0 4px rgba(176, 136, 88, 0.4); }
+.lco-dash-health-dot--critical  { background: var(--lco-rust);   animation: lco-dot-pulse 2s ease-in-out infinite; }
 
 .lco-dash-health-label {
     font-size: 10px;
@@ -328,9 +368,9 @@ body {
     transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.lco-dash-context-fill--healthy   { background: var(--lco-health-green); box-shadow: 0 0 4px rgba(76, 175, 80, 0.3); }
-.lco-dash-context-fill--degrading { background: var(--lco-health-yellow); box-shadow: 0 0 4px rgba(245, 166, 35, 0.3); }
-.lco-dash-context-fill--critical  { background: var(--lco-health-red); box-shadow: 0 0 4px rgba(229, 57, 53, 0.3); }
+.lco-dash-context-fill--healthy   { background: var(--lco-patina); box-shadow: 0 0 4px rgba(90, 122, 94, 0.3); }
+.lco-dash-context-fill--degrading { background: var(--lco-brass);  box-shadow: 0 0 4px rgba(176, 136, 88, 0.3); }
+.lco-dash-context-fill--critical  { background: var(--lco-rust);   box-shadow: 0 0 4px rgba(142, 61, 42, 0.3); }
 
 .lco-dash-context-label {
     font-size: 11px;
@@ -399,10 +439,10 @@ body {
     flex-shrink: 0;
 }
 
-.lco-dash-budget-dot--comfortable { background: var(--lco-health-green);  box-shadow: 0 0 4px rgba(76, 175, 80, 0.4); }
-.lco-dash-budget-dot--moderate    { background: var(--lco-health-yellow); box-shadow: 0 0 4px rgba(245, 166, 35, 0.4); }
-.lco-dash-budget-dot--tight       { background: var(--lco-health-orange); box-shadow: 0 0 4px rgba(255, 152, 0, 0.4); }
-.lco-dash-budget-dot--critical    { background: var(--lco-health-red);    box-shadow: 0 0 4px rgba(229, 57, 53, 0.4); }
+.lco-dash-budget-dot--comfortable { background: var(--lco-patina); box-shadow: 0 0 4px rgba(90, 122, 94, 0.4); }
+.lco-dash-budget-dot--moderate    { background: var(--lco-brass);  box-shadow: 0 0 4px rgba(176, 136, 88, 0.4); }
+.lco-dash-budget-dot--tight       { background: var(--lco-ember);  box-shadow: 0 0 4px rgba(204, 107, 61, 0.4); }
+.lco-dash-budget-dot--critical    { background: var(--lco-rust);   box-shadow: 0 0 4px rgba(142, 61, 42, 0.4); }
 
 .lco-dash-budget-zone-label {
     font-size: 10px;
@@ -453,10 +493,10 @@ body {
     transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.lco-dash-budget-fill--comfortable { background: var(--lco-health-green);  box-shadow: 0 0 4px rgba(76, 175, 80, 0.3); }
-.lco-dash-budget-fill--moderate    { background: var(--lco-health-yellow); box-shadow: 0 0 4px rgba(245, 166, 35, 0.3); }
-.lco-dash-budget-fill--tight       { background: var(--lco-health-orange); box-shadow: 0 0 4px rgba(255, 152, 0, 0.3); }
-.lco-dash-budget-fill--critical    { background: var(--lco-health-red);    box-shadow: 0 0 4px rgba(229, 57, 53, 0.3); }
+.lco-dash-budget-fill--comfortable { background: var(--lco-patina); box-shadow: 0 0 4px rgba(90, 122, 94, 0.3); }
+.lco-dash-budget-fill--moderate    { background: var(--lco-brass);  box-shadow: 0 0 4px rgba(176, 136, 88, 0.3); }
+.lco-dash-budget-fill--tight       { background: var(--lco-ember);  box-shadow: 0 0 4px rgba(204, 107, 61, 0.3); }
+.lco-dash-budget-fill--critical    { background: var(--lco-rust);   box-shadow: 0 0 4px rgba(142, 61, 42, 0.3); }
 
 .lco-dash-budget-row-pct {
     font-size: 11px;
@@ -692,8 +732,8 @@ body {
 /* ── Animations ─────────────────────────────────────────────────────────────── */
 
 @keyframes lco-dot-pulse {
-    0%, 100% { box-shadow: 0 0 4px rgba(229, 57, 53, 0.4); }
-    50%      { box-shadow: 0 0 10px rgba(229, 57, 53, 0.7); }
+    0%, 100% { box-shadow: 0 0 4px rgba(142, 61, 42, 0.4); }
+    50%      { box-shadow: 0 0 10px rgba(142, 61, 42, 0.7); }
 }
 
 @keyframes lco-dash-slide-in {

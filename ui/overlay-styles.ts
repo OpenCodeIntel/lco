@@ -8,14 +8,16 @@
 
 export const OVERLAY_CSS = `
 :host {
-  /* Claude terra cotta palette */
-  --lco-accent:       #c15f3c;
+  /* Workshop palette (mirrors dashboard.css). Terra cotta is the only
+     accent; brass replaces Material amber for warn surfaces so the overlay
+     reads as one product with the side panel. */
+  --lco-accent:       #c15f3c;             /* terracotta */
   --lco-bar-fill:     #c15f3c;
   --lco-bar-glow:     rgba(193, 95, 60, 0.28);
   --lco-bar-bg:       rgba(193, 95, 60, 0.10);
-  --lco-warn-fill:    #f59e0b;
-  --lco-warn-glow:    rgba(245, 158, 11, 0.22);
-  --lco-warn-bg:      rgba(245, 158, 11, 0.09);
+  --lco-warn-fill:    #b08858;             /* brass */
+  --lco-warn-glow:    rgba(176, 136, 88, 0.22);
+  --lco-warn-bg:      rgba(176, 136, 88, 0.10);
 
   /* Dark mode (default on claude.ai) */
   --lco-bg:           rgba(30, 30, 28, 0.92);   /* was .82; prevents muted text failing on light page content bleedthrough */
@@ -39,9 +41,11 @@ export const OVERLAY_CSS = `
     --lco-bar-fill:     #b35a34;
     --lco-bar-glow:     rgba(179, 90, 52, 0.20);
     --lco-bar-bg:       rgba(179, 90, 52, 0.10);
-    --lco-warn-fill:    #d97706;
-    --lco-warn-glow:    rgba(217, 119, 6, 0.20);
-    --lco-warn-bg:      rgba(217, 119, 6, 0.08);
+    /* Brass holds well in light mode without needing a darker variant; the
+       fill already reads warm against the bone surface. */
+    --lco-warn-fill:    #9b7448;
+    --lco-warn-glow:    rgba(155, 116, 72, 0.20);
+    --lco-warn-bg:      rgba(155, 116, 72, 0.08);
     --lco-border:       rgba(0, 0, 0, 0.08);      /* was .06; widget edge was missing in light mode */
     --lco-border-hover: rgba(0, 0, 0, 0.14);
   }
@@ -60,8 +64,9 @@ export const OVERLAY_CSS = `
 }
 
 @keyframes lco-dot-pulse {
-  0%, 100% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.4); }
-  50%      { box-shadow: 0 0 10px rgba(239, 68, 68, 0.7); }
+  /* Critical-state pulse uses the on-dark rust tint (#c46948). */
+  0%, 100% { box-shadow: 0 0 4px rgba(196, 105, 72, 0.4); }
+  50%      { box-shadow: 0 0 10px rgba(196, 105, 72, 0.7); }
 }
 
 @keyframes lco-nudge-in {
@@ -237,9 +242,12 @@ export const OVERLAY_CSS = `
      Instant swap avoids a paint-layer transition on the main thread. */
 }
 
-.lco-health-dot--healthy   { background: #86efac; box-shadow: 0 0 4px rgba(134, 239, 172, 0.4); }
-.lco-health-dot--degrading { background: #f59e0b; box-shadow: 0 0 4px rgba(245, 158, 11, 0.4); }
-.lco-health-dot--critical  { background: #ef4444; animation: lco-dot-pulse 2s ease-in-out infinite; }
+/* Workshop earth tones: patina (operational), brass (degrading), rust (critical).
+   Mint green and Material amber/red were generic; the new palette reads as one
+   product across the overlay and side panel. */
+.lco-health-dot--healthy   { background: #6e957a; box-shadow: 0 0 4px rgba(110, 149, 122, 0.45); }
+.lco-health-dot--degrading { background: #b08858; box-shadow: 0 0 4px rgba(176, 136, 88, 0.45); }
+.lco-health-dot--critical  { background: #c46948; animation: lco-dot-pulse 2s ease-in-out infinite; }
 
 .lco-health-label {
   font-size: 10px;
@@ -248,9 +256,9 @@ export const OVERLAY_CSS = `
   /* No transition: color is a paint property; health state changes snap instantly. */
 }
 
-.lco-health-label--healthy   { color: #86efac; }
-.lco-health-label--degrading { color: #f59e0b; }
-.lco-health-label--critical  { color: #ef4444; }
+.lco-health-label--healthy   { color: #6e957a; }
+.lco-health-label--degrading { color: #b08858; }
+.lco-health-label--critical  { color: #c46948; }
 
 .lco-coaching {
   font-size: 10px;
@@ -355,12 +363,14 @@ export const OVERLAY_CSS = `
   box-shadow: 0 0 6px var(--lco-warn-glow);
 }
 
+/* Bar fills mirror the dot palette. Tight uses ember (#cc6b3d) which sits
+   between brass and rust on the warm scale. */
 .lco-bar-fill--healthy,
-.lco-bar-fill--comfortable { background: #86efac; box-shadow: 0 0 6px rgba(134, 239, 172, 0.3); }
+.lco-bar-fill--comfortable { background: #6e957a; box-shadow: 0 0 6px rgba(110, 149, 122, 0.3); }
 .lco-bar-fill--degrading,
-.lco-bar-fill--moderate    { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.3); }
-.lco-bar-fill--critical    { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.3); }
-.lco-bar-fill--tight       { background: #fb923c; box-shadow: 0 0 6px rgba(251, 146, 60, 0.3); }
+.lco-bar-fill--moderate    { background: #b08858; box-shadow: 0 0 6px rgba(176, 136, 88, 0.3); }
+.lco-bar-fill--tight       { background: #cc6b3d; box-shadow: 0 0 6px rgba(204, 107, 61, 0.3); }
+.lco-bar-fill--critical    { background: #c46948; box-shadow: 0 0 6px rgba(196, 105, 72, 0.3); }
 
 .lco-bar-fill.lco-streaming {
   animation: lco-bar-pulse 1.2s ease-in-out infinite;
@@ -392,8 +402,8 @@ export const OVERLAY_CSS = `
 }
 
 .lco-nudge--info     { background: rgba(107, 140, 174, 0.09); border-left: 2px solid #6b8cae; } /* desaturated steel from terracotta undertones; no pure blue in palette */
-.lco-nudge--warning  { background: rgba(245, 158,  11, 0.11); border-left: 2px solid #f59e0b; }
-.lco-nudge--critical { background: rgba(239,  68,  68, 0.11); border-left: 2px solid #ef4444; }
+.lco-nudge--warning  { background: rgba(176, 136, 88, 0.12); border-left: 2px solid #b08858; }
+.lco-nudge--critical { background: rgba(196, 105, 72, 0.12); border-left: 2px solid #c46948; }
 
 .lco-nudge--exiting {
   animation: lco-nudge-out 0.2s ease forwards;
