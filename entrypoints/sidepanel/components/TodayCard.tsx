@@ -23,9 +23,11 @@ export default function TodayCard({ summary, budget }: Props) {
     const cost = summary?.estimatedCost ?? 0;
     const isEmpty = !summary;
 
+    // The parent <CollapsibleSection title="Today"> already labels this row,
+    // so the card itself just renders the stats. Adding a second "today"
+    // label inside would stack the word twice in the panel.
     return (
         <div className={`lco-dash-today ${isEmpty ? 'lco-dash-today--empty' : ''}`}>
-            <span className="lco-dash-today-label">today</span>
             <span className="lco-dash-today-stats">
                 {conversations} conv · {turns} turn{turns !== 1 ? 's' : ''} · {formatTokens(tokens)} tok · {formatApiRateCost(cost, budget)}
             </span>
