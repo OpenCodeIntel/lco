@@ -61,7 +61,7 @@ export default function TurnTicker({ turns, maxBars = 12 }: Props): React.ReactE
             </div>
             {trend !== null && (
                 <span className={`lco-ticker-trend lco-ticker-trend--${trend.direction}`}>
-                    {trend.direction === 'up' ? '↑' : '↓'} {Math.abs(trend.percent).toFixed(0)}%
+                    {trend.direction === 'up' ? '↑' : '↓'} {Math.abs(trend.percent).toFixed(2)}%
                 </span>
             )}
         </div>
@@ -74,15 +74,23 @@ function turnHasDelta(turn: TurnRecord): turn is TurnRecord & { deltaUtilization
 }
 
 /**
- * Relative change between the last two turns. We report percent of previous
- * (so 0.05% -> 0.10% reads as +100%) rather than absolute delta because the
- * absolute number for a single turn is too small to communicate growth.
- * Suppressed when the previous turn was zero or missing.
+ * Trend between the last two turns, reported as the absolute percentage-point
+ * delta in the same unit the bars are in (% of session).
+ *
+ * Earlier draft used relative percent change ((curr - prev) / prev) * 100,
+ * which explodes for micro-values: a turn going from 0.05% to 0.15% of
+ * session is a +0.10pp move but reads as "+200%" relative, which a normal
+ * user pattern-matches against context-rot warnings and panics. The bars
+ * already encode magnitude visually; the trend label only needs to add
+ * direction and the honest absolute size of the change.
+ *
+ * Suppressed when either turn is missing or when the move is below 0.01%
+ * of session, which is below the noise floor of our tokenizer estimate.
  */
 function computeTrend(previous: number | null, current: number | null): { direction: 'up' | 'down'; percent: number } | null {
-    if (previous === null || current === null || previous <= 0) return null;
-    const change = ((current - previous) / previous) * 100;
-    if (Math.abs(change) < 1) return null;       // tiny moves read as noise
+    if (previous === null || current === null) return null;
+    const change = current - previous;
+    if (Math.abs(change) < 0.01) return null;
     return { direction: change >= 0 ? 'up' : 'down', percent: change };
 }
 
