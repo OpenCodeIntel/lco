@@ -21,6 +21,7 @@
 import React from 'react';
 import type { UsageBudgetResult, UsageBudgetSession, UsageBudgetCredit, BudgetZone } from '../../../lib/message-types';
 import { classifyZone } from '../../../lib/usage-budget';
+import { formatEtaLabel, type WeeklyEta } from '../../../lib/weekly-cap-eta';
 
 interface Props {
     budget: UsageBudgetResult | null;
@@ -30,6 +31,12 @@ interface Props {
      * data get the "account type not supported" message.
      */
     isClaudeTab: boolean;
+    /**
+     * Weekly-cap ETA from the weekly-cap ETA agent. Null until enough snapshots
+     * have accumulated, or when usage is flat/declining, or post-reset.
+     * Session tier only; credit/unsupported cards never receive this.
+     */
+    weeklyEta?: WeeklyEta | null;
 }
 
 // Zone-to-label mapping for the dot and fills. Mirrors the health dot
@@ -43,7 +50,7 @@ const ZONE_LABELS: Record<BudgetZone, string> = {
     critical: 'Critical',
 };
 
-export default function UsageBudgetCard({ budget, isClaudeTab }: Props) {
+export default function UsageBudgetCard({ budget, isClaudeTab, weeklyEta }: Props) {
     // No data at all + the user is on a tab where we cannot fetch any.
     // Surface the obvious next action rather than a silent empty card.
     if (!budget && !isClaudeTab) {
@@ -69,13 +76,13 @@ export default function UsageBudgetCard({ budget, isClaudeTab }: Props) {
     // Session and credit each get their own render path; the discriminator on
     // `budget.kind` lets TypeScript narrow into the right field set.
     return budget.kind === 'session'
-        ? <SessionBudget budget={budget} />
+        ? <SessionBudget budget={budget} eta={weeklyEta ?? null} />
         : <CreditBudget budget={budget} />;
 }
 
 // ── Session variant (Pro / Personal / Max) ───────────────────────────────────
 
-function SessionBudget({ budget }: { budget: UsageBudgetSession }) {
+function SessionBudget({ budget, eta }: { budget: UsageBudgetSession; eta: WeeklyEta | null }) {
     const { sessionPct, weeklyPct, sessionMinutesUntilReset, weeklyResetLabel, zone, statusLabel } = budget;
 
     // Clamp to [0, 100] for the bar fill. The API returns 0-100 already, but
@@ -123,6 +130,13 @@ function SessionBudget({ budget }: { budget: UsageBudgetSession }) {
                 </div>
                 <span className="lco-dash-budget-row-pct">{Math.round(safeWeeklyPct)}%</span>
             </div>
+
+            {/* ETA projection: shown under the weekly bar when the agent has
+                enough history to project confidently. Hidden when null (too few
+                snapshots, flat/declining usage, or immediately after a reset). */}
+            {eta !== null && (
+                <p className="lco-dash-budget-eta">{formatEtaLine(eta)}</p>
+            )}
 
             {/* Reset times */}
             <div className="lco-dash-budget-resets">
@@ -181,4 +195,20 @@ function formatSessionReset(minutes: number): string {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+/**
+ * Build the one-liner ETA coaching copy for the side-panel card.
+ * Copy varies by confidence to calibrate the user's expectation of accuracy.
+ */
+function formatEtaLine(eta: WeeklyEta): string {
+    const label = formatEtaLabel(eta.etaTimestamp);
+    switch (eta.confidence) {
+        case 'high':
+            return `At this pace, you'll hit your weekly cap by ${label}.`;
+        case 'medium':
+            return `Estimated cap: ${label}. Estimate firms up over the next day.`;
+        case 'low':
+            return `Estimating: cap by ${label}. Need more data for confidence.`;
+    }
 }

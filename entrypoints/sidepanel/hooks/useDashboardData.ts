@@ -22,6 +22,7 @@ import {
     listConversations,
     getUsageLimits,
     getUsageDeltas,
+    getUsageBudgetSnapshots,
     todayDateString,
     type DailySummary,
     type ConversationRecord,
@@ -29,6 +30,7 @@ import {
 import { computeHealthScore, computeGrowthRate, type HealthScore } from '../../../lib/health-score';
 import { computeUsageBudget } from '../../../lib/usage-budget';
 import { computeTokenEconomics, type TokenEconomicsResult } from '../../../lib/token-economics';
+import { computeWeeklyEta, type WeeklyEta } from '../../../lib/weekly-cap-eta';
 import type { UsageBudgetResult } from '../../../lib/message-types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -102,6 +104,13 @@ export interface DashboardData {
      * Maps model name to median tokens per 1% of session consumed.
      */
     tokenEconomics: TokenEconomicsResult | null;
+    /**
+     * Projected time-to-100% for the weekly usage cap.
+     * Null until MIN_SNAPSHOTS_FOR_ETA snapshots exist, or when usage is flat
+     * or declining, or immediately after a weekly reset (snapshots cleared).
+     * Session tier only (Pro/Max). Always null on Enterprise and unsupported tiers.
+     */
+    weeklyEta: WeeklyEta | null;
     loading: boolean;
 }
 
@@ -115,6 +124,7 @@ export function useDashboardData(): DashboardData {
     const [budget, setBudget] = useState<UsageBudgetResult | null>(null);
     const [isClaudeTab, setIsClaudeTab] = useState(false);
     const [tokenEconomics, setTokenEconomics] = useState<TokenEconomicsResult | null>(null);
+    const [weeklyEta, setWeeklyEta] = useState<WeeklyEta | null>(null);
     const [loading, setLoading] = useState(true);
 
     // Track current tab ID so we know which activeConv_ key to watch.
@@ -262,6 +272,21 @@ export function useDashboardData(): DashboardData {
         }
     }, []);
 
+    const loadWeeklyEta = useCallback(async () => {
+        try {
+            const orgId = orgIdRef.current;
+            if (!orgId) {
+                setWeeklyEta(null);
+                return;
+            }
+            const snapshots = await getUsageBudgetSnapshots(orgId);
+            if (orgIdRef.current !== orgId) return;
+            setWeeklyEta(computeWeeklyEta(snapshots, Date.now()));
+        } catch {
+            // Non-critical: ETA panel simply stays hidden.
+        }
+    }, []);
+
     // ── Initial load ──────────────────────────────────────────────────────────
 
     useEffect(() => {
@@ -289,6 +314,7 @@ export function useDashboardData(): DashboardData {
             await loadToday();
             if (onClaude) {
                 await loadBudget();
+                loadWeeklyEta();
             }
             // Token economics is non-blocking: fire after the main data loads.
             // It requires enough delta records to be meaningful (MIN_SAMPLES per model),
@@ -298,7 +324,7 @@ export function useDashboardData(): DashboardData {
         }
 
         init();
-    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadTokenEconomics]);
+    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadWeeklyEta, loadTokenEconomics]);
 
     // ── Live subscriptions ────────────────────────────────────────────────────
 
@@ -343,6 +369,10 @@ export function useDashboardData(): DashboardData {
                 if (hasBudgetChange && isClaudeTabRef.current) {
                     loadBudget();
                 }
+                const hasSnapshotChange = keys.some(k => k.startsWith('usageBudgetSnapshots:'));
+                if (hasSnapshotChange && isClaudeTabRef.current) {
+                    loadWeeklyEta();
+                }
                 if (hasDeltaChange) {
                     loadTokenEconomics();
                 }
@@ -378,10 +408,12 @@ export function useDashboardData(): DashboardData {
 
             if (onClaude) {
                 loadBudget();
+                loadWeeklyEta();
             } else {
                 // Explicitly clear budget -- do not show stale data from the previous
                 // Claude tab while the user is on Gmail, GitHub, etc.
                 setBudget(null);
+                setWeeklyEta(null);
             }
         }
 
@@ -405,9 +437,11 @@ export function useDashboardData(): DashboardData {
             if (onClaude) {
                 // Navigated back to claude.ai: reload live data.
                 loadBudget();
+                loadWeeklyEta();
             } else {
                 // Navigated away: clear live data immediately.
                 setBudget(null);
+                setWeeklyEta(null);
             }
         }
 
@@ -420,6 +454,7 @@ export function useDashboardData(): DashboardData {
             // is no active tab to track. The user will need to click another tab.
             applyIsClaudeTab(false);
             setBudget(null);
+            setWeeklyEta(null);
         }
 
         chrome.storage.onChanged.addListener(onStorageChanged);
@@ -433,7 +468,7 @@ export function useDashboardData(): DashboardData {
             chrome.tabs.onUpdated.removeListener(onTabUpdated);
             chrome.tabs.onRemoved.removeListener(onTabRemoved);
         };
-    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadTokenEconomics]);
+    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadWeeklyEta, loadTokenEconomics]);
 
-    return { today, activeConv, activeHealth, conversations, budget, isClaudeTab, tokenEconomics, loading };
+    return { today, activeConv, activeHealth, conversations, budget, isClaudeTab, tokenEconomics, weeklyEta, loading };
 }

@@ -17,6 +17,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import UsageBudgetCard from '../../entrypoints/sidepanel/components/UsageBudgetCard';
 import type { UsageBudgetSession, UsageBudgetCredit, UsageBudgetResult } from '../../lib/message-types';
+import type { WeeklyEta } from '../../lib/weekly-cap-eta';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -147,5 +148,58 @@ describe('UsageBudgetCard — credit variant', () => {
         // saw the empty-state placeholder instead of their actual spend.
         render(<UsageBudgetCard budget={creditBudget()} isClaudeTab={true} />);
         expect(screen.queryByText(/Open claude.ai/)).toBeNull();
+    });
+});
+
+// ── Weekly ETA (GET-21) ───────────────────────────────────────────────────────
+// The ETA line renders under the weekly bar in the session variant only.
+// It is hidden when eta is null, absent on credit/unsupported variants.
+
+describe('UsageBudgetCard — weekly ETA', () => {
+    const NOW = new Date('2026-04-09T12:00:00.000Z').getTime();
+    // ETA is set to 6 hours from NOW so formatEtaLabel produces a deterministic weekday.
+    const etaTimestamp = NOW + 6 * 60 * 60 * 1000;
+
+    function makeEta(confidence: WeeklyEta['confidence'] = 'high'): WeeklyEta {
+        return { etaTimestamp, hoursRemaining: 6, confidence };
+    }
+
+    it('renders the ETA line when eta is non-null on the session variant', () => {
+        render(<UsageBudgetCard budget={sessionBudget()} isClaudeTab={true} weeklyEta={makeEta('high')} />);
+        expect(screen.getByText(/At this pace/)).toBeTruthy();
+    });
+
+    it('does not render the ETA line when eta is null', () => {
+        render(<UsageBudgetCard budget={sessionBudget()} isClaudeTab={true} weeklyEta={null} />);
+        expect(screen.queryByText(/At this pace/)).toBeNull();
+        expect(screen.queryByText(/Estimating/)).toBeNull();
+        expect(screen.queryByText(/Estimated cap/)).toBeNull();
+    });
+
+    it('does not render the ETA line when weeklyEta prop is omitted', () => {
+        render(<UsageBudgetCard budget={sessionBudget()} isClaudeTab={true} />);
+        expect(screen.queryByText(/At this pace/)).toBeNull();
+    });
+
+    it('shows "At this pace" copy for high confidence', () => {
+        render(<UsageBudgetCard budget={sessionBudget()} isClaudeTab={true} weeklyEta={makeEta('high')} />);
+        expect(screen.getByText(/At this pace, you'll hit your weekly cap by/)).toBeTruthy();
+    });
+
+    it('shows "Estimated cap" copy for medium confidence', () => {
+        render(<UsageBudgetCard budget={sessionBudget()} isClaudeTab={true} weeklyEta={makeEta('medium')} />);
+        expect(screen.getByText(/Estimated cap:/)).toBeTruthy();
+        expect(screen.getByText(/Estimate firms up/)).toBeTruthy();
+    });
+
+    it('shows "Estimating" copy for low confidence', () => {
+        render(<UsageBudgetCard budget={sessionBudget()} isClaudeTab={true} weeklyEta={makeEta('low')} />);
+        expect(screen.getByText(/Estimating:/)).toBeTruthy();
+        expect(screen.getByText(/Need more data/)).toBeTruthy();
+    });
+
+    it('does not render ETA on the credit (Enterprise) variant', () => {
+        render(<UsageBudgetCard budget={creditBudget()} isClaudeTab={true} weeklyEta={makeEta('high')} />);
+        expect(screen.queryByText(/At this pace/)).toBeNull();
     });
 });
