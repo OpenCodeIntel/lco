@@ -216,10 +216,15 @@ export function useDashboardData(): DashboardData {
 
             if (conv) {
                 const growthRate = computeGrowthRate(conv.turns.map(t => t.contextPct));
+                // Side panel renders historical / restored conversations. We do not
+                // have the live draft text here, so detail-heavy is conservatively
+                // false. Model comes from the stored conversation record.
                 const health = computeHealthScore({
                     contextPct: conv.lastContextPct,
                     turnCount: conv.turnCount,
                     growthRate,
+                    model: conv.model,
+                    isDetailHeavy: false,
                 });
                 setActiveHealth(health);
             } else {

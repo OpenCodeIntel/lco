@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
     classifyModelTier,
     analyzePrompt,
+    isDetailHeavy,
     LARGE_PASTE_MIN_CHARS,
     FOLLOWUP_CHAIN_MIN_COUNT,
     type PromptCharacteristics,
@@ -366,5 +367,68 @@ describe('model_suggestion with delta data', () => {
         });
         const ms = signals.find(x => x.type === 'model_suggestion');
         expect(ms).toBeUndefined();
+    });
+});
+
+// ── DETAIL_HEAVY_KEYWORDS / inject.ts mirror drift guard ────────────────────
+//
+// inject.ts cannot import from lib/, so DETAIL_HEAVY_KEYWORDS is mirrored
+// inline as `detailHeavyKeywords`. If the two ever drift, the warning
+// threshold shifts at the bridge layer but not in lib (or vice versa),
+// and the user sees inconsistent coaching. This test reads inject.ts as
+// text and asserts every keyword on the lib side appears verbatim.
+
+describe('inject.ts mirrors DETAIL_HEAVY_KEYWORDS', () => {
+    it('contains every lib-side keyword as a string literal', async () => {
+        const fs = await import('node:fs/promises');
+        const path = await import('node:path');
+        const url = await import('node:url');
+        const here = path.dirname(url.fileURLToPath(import.meta.url));
+        const injectPath = path.resolve(here, '../../entrypoints/inject.ts');
+        const source = await fs.readFile(injectPath, 'utf8');
+        // Re-import to avoid pulling in the whole lib through static deps.
+        const { DETAIL_HEAVY_KEYWORDS } = await import('../../lib/prompt-analysis');
+        for (const keyword of DETAIL_HEAVY_KEYWORDS) {
+            expect(
+                source.includes(`'${keyword}'`),
+                `inject.ts is missing the mirrored keyword '${keyword}'`,
+            ).toBe(true);
+        }
+    });
+});
+
+// ── isDetailHeavy ────────────────────────────────────────────────────────────
+
+describe('isDetailHeavy', () => {
+    it('returns false for empty input', () => {
+        expect(isDetailHeavy('')).toBe(false);
+    });
+
+    it('returns false for casual prose', () => {
+        expect(isDetailHeavy('how do I sort an array in python')).toBe(false);
+        expect(isDetailHeavy('any thoughts on the pricing model?')).toBe(false);
+        expect(isDetailHeavy('all good?')).toBe(false);
+    });
+
+    it('returns true when the prompt contains a fenced code block', () => {
+        expect(isDetailHeavy('here is the code:\n```ts\nconst x = 1;\n```')).toBe(true);
+    });
+
+    it('returns true for precision keywords (case-insensitive)', () => {
+        expect(isDetailHeavy('give me the exact bytes')).toBe(true);
+        expect(isDetailHeavy('Quote it VERBATIM please')).toBe(true);
+        expect(isDetailHeavy('precise reproduction needed')).toBe(true);
+    });
+
+    it('returns true for compound triggers like "list every"', () => {
+        expect(isDetailHeavy('list every parameter we discussed')).toBe(true);
+        expect(isDetailHeavy('full list of files touched')).toBe(true);
+    });
+
+    it('does not over-trigger on the bare word "all" or "every"', () => {
+        // Bare "all" and "every" appear constantly in prose and would
+        // flood the warning if treated as triggers on their own.
+        expect(isDetailHeavy('I tried all the suggestions')).toBe(false);
+        expect(isDetailHeavy('every user reports the same bug')).toBe(false);
     });
 });

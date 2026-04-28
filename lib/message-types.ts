@@ -40,6 +40,13 @@ export interface StreamCompletePayload {
     hasCodeBlock?: boolean;
     /** True when the prompt is shorter than 50 characters (terse follow-up). */
     isShortFollowUp?: boolean;
+    /**
+     * True when the prompt demands precise / exhaustive recall on prior context
+     * (code blocks or precision keywords). Computed in inject.ts using the same
+     * keyword set as lib/prompt-analysis.ts isDetailHeavy(). The Health Agent
+     * reads this to shift its per-model warn/critical thresholds earlier.
+     */
+    isDetailHeavy?: boolean;
     /** Organization UUID extracted from the API URL. Used for account isolation. */
     organizationId?: string;
 }

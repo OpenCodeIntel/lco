@@ -1,11 +1,16 @@
 import { describe, test, expect } from 'vitest';
 
-// Audit: lib/health-score.ts - rule verification and boundary testing
+// Audit: lib/health-score.ts - per-model rule verification and boundary testing.
+//
+// After GET-28 the threshold is per-model. The audit here pins specific
+// behaviors using two reference models:
+//   - Sonnet 4.5 (warn=50, crit=75): 200k window, weak long-context.
+//   - Opus 4.6 (warn=65, crit=85): 1M window, strong long-context.
+// Plus the model-agnostic absolute floor at DEGRADING_CEIL = 90.
 
 import {
     computeHealthScore,
     computeGrowthRate,
-    HEALTHY_CEIL,
     DEGRADING_CEIL,
     TURN_HEALTHY_CEIL,
     TURN_DEGRADING_CEIL,
@@ -14,105 +19,152 @@ import {
     type HealthInput,
 } from '../../lib/health-score';
 
-// ── computeHealthScore: Rule 1 (context >= DEGRADING_CEIL = 90% = critical) ──
+const SONNET_45 = 'claude-sonnet-4-5';
+const OPUS_46 = 'claude-opus-4-6';
 
-describe('computeHealthScore: Rule 1 (high context = critical)', () => {
-    test('exactly at DEGRADING_CEIL (90%) is critical', () => {
-        expect(computeHealthScore({ contextPct: 90, turnCount: 0, growthRate: null }).level).toBe('critical');
+function input(overrides: Partial<HealthInput> = {}): HealthInput {
+    return {
+        contextPct: 0,
+        turnCount: 0,
+        growthRate: null,
+        model: SONNET_45,
+        isDetailHeavy: false,
+        ...overrides,
+    };
+}
+
+// ── Absolute floor: any model >= 90% = critical ───────────────────────────
+
+describe('absolute critical floor', () => {
+    test('exactly at DEGRADING_CEIL (90%) is critical on Sonnet 4.5', () => {
+        expect(computeHealthScore(input({ contextPct: 90 })).level).toBe('critical');
     });
 
-    test('above DEGRADING_CEIL is critical', () => {
-        expect(computeHealthScore({ contextPct: 95, turnCount: 0, growthRate: null }).level).toBe('critical');
+    test('above DEGRADING_CEIL is critical on Sonnet 4.5', () => {
+        expect(computeHealthScore(input({ contextPct: 95 })).level).toBe('critical');
     });
 
-    test('just below DEGRADING_CEIL is not critical from context alone', () => {
-        expect(computeHealthScore({ contextPct: 89.9, turnCount: 0, growthRate: null }).level).not.toBe('critical');
-    });
-});
-
-// ── Rule 2 (high context + many turns = critical) ──────────────────────────
-
-describe('computeHealthScore: Rule 2 (context >= 70 + turns > 20)', () => {
-    test('at threshold boundary: 70% context + 21 turns = critical', () => {
-        expect(computeHealthScore({ contextPct: 70, turnCount: 21, growthRate: null }).level).toBe('critical');
+    test('exactly at DEGRADING_CEIL is critical even on Opus 4.6 (1M)', () => {
+        expect(computeHealthScore(input({ contextPct: 90, model: OPUS_46 })).level).toBe('critical');
     });
 
-    test('at threshold boundary: 70% context + 20 turns = degrading (not critical)', () => {
-        const result = computeHealthScore({ contextPct: 70, turnCount: 20, growthRate: null });
-        expect(result.level).not.toBe('critical');
-    });
-
-    test('below context threshold: 69% + 21 turns = not critical from rule 2', () => {
-        const result = computeHealthScore({ contextPct: 69, turnCount: 21, growthRate: null });
-        // Should be healthy or degrading from rule 5 (turns > 30), not critical
-        expect(result.level).not.toBe('critical');
-    });
-});
-
-// ── Rule 3 (moderate context + moderate turns = degrading) ─────────────────
-
-describe('computeHealthScore: Rule 3 (context >= 70 + turns > 10)', () => {
-    test('at threshold: 70% + 11 turns = degrading', () => {
-        expect(computeHealthScore({ contextPct: 70, turnCount: 11, growthRate: null }).level).toBe('degrading');
-    });
-
-    test('below turn threshold: 70% + 10 turns = healthy (not degrading from rule 3)', () => {
-        const result = computeHealthScore({ contextPct: 70, turnCount: 10, growthRate: null });
-        expect(result.level).toBe('healthy');
+    test('per-model critical fires before the absolute floor on Opus 4.6', () => {
+        // Opus 4.6 has the highest per-model crit in the table (85). At
+        // 89.9% context we are below the absolute 90% floor but already
+        // past Opus 4.6's per-model crit. The result is still critical;
+        // this asserts the per-model rule does its job before the floor
+        // ever has to step in. (No model in the table has crit > 90, so
+        // no current row tests the floor in isolation; the absolute floor
+        // is exercised separately by the 90% / 95% cases above.)
+        expect(computeHealthScore(input({ contextPct: 89.9, model: OPUS_46 })).level).toBe('critical');
     });
 });
 
-// ── Rule 4 (fast growth + meaningful context = degrading) ──────────────────
+// ── Per-model: Sonnet 4.5 thresholds (50 / 75) ────────────────────────────
 
-describe('computeHealthScore: Rule 4 (fast growth)', () => {
-    test('growth > 8 with context > 30 = degrading', () => {
-        expect(computeHealthScore({ contextPct: 31, turnCount: 2, growthRate: 9 }).level).toBe('degrading');
+describe('per-model: Sonnet 4.5 (warn=50, crit=75)', () => {
+    test('crit boundary: 75% = critical', () => {
+        expect(computeHealthScore(input({ contextPct: 75 })).level).toBe('critical');
+    });
+
+    test('crit boundary minus 1: 74% with low turns = degrading', () => {
+        expect(computeHealthScore(input({ contextPct: 74, turnCount: 2 })).level).toBe('degrading');
+    });
+
+    test('warn boundary: 50% = degrading', () => {
+        expect(computeHealthScore(input({ contextPct: 50 })).level).toBe('degrading');
+    });
+
+    test('just below warn: 49% with few turns = healthy', () => {
+        expect(computeHealthScore(input({ contextPct: 49, turnCount: 3 })).level).toBe('healthy');
+    });
+});
+
+// ── Per-model: Opus 4.6 thresholds (65 / 85) ──────────────────────────────
+
+describe('per-model: Opus 4.6 (warn=65, crit=85)', () => {
+    test('crit boundary: 85% = critical', () => {
+        expect(computeHealthScore(input({ contextPct: 85, model: OPUS_46 })).level).toBe('critical');
+    });
+
+    test('warn boundary: 65% = degrading', () => {
+        expect(computeHealthScore(input({ contextPct: 65, model: OPUS_46 })).level).toBe('degrading');
+    });
+
+    test('just below warn: 64% with few turns = healthy', () => {
+        expect(computeHealthScore(input({ contextPct: 64, turnCount: 3, model: OPUS_46 })).level).toBe('healthy');
+    });
+
+    test('Opus 4.6 at 80% (degrading) where Sonnet 4.5 would be critical', () => {
+        const opus = computeHealthScore(input({ contextPct: 80, model: OPUS_46, turnCount: 3 }));
+        const sonnet = computeHealthScore(input({ contextPct: 80, model: SONNET_45, turnCount: 3 }));
+        expect(opus.level).toBe('degrading');
+        expect(sonnet.level).toBe('critical');
+    });
+});
+
+// ── Turn-based escalation: approaching + many turns -> critical ─────────
+
+describe('approaching + deep turns escalates to critical', () => {
+    test('Sonnet 4.5 at 60% (approaching) with > 20 turns = critical', () => {
+        const h = computeHealthScore(input({ contextPct: 60, turnCount: TURN_DEGRADING_CEIL + 2 }));
+        expect(h.level).toBe('critical');
+        expect(h.coaching).toMatch(/turns deep/);
+    });
+
+    test('Sonnet 4.5 at 60% (approaching) with 20 turns = degrading (boundary)', () => {
+        const h = computeHealthScore(input({ contextPct: 60, turnCount: TURN_DEGRADING_CEIL }));
+        expect(h.level).toBe('degrading');
+    });
+});
+
+// ── Fast growth secondary signal ───────────────────────────────────────────
+
+describe('fast growth secondary', () => {
+    test('growth > 8 with context > 30 (and below warn) = degrading', () => {
+        // Sonnet 4.5 warn=50; 35 with fast growth -> below warn but secondary fires.
+        expect(computeHealthScore(input({ contextPct: 35, turnCount: 2, growthRate: 9 })).level).toBe('degrading');
     });
 
     test('growth > 8 but context <= 30 = healthy', () => {
-        expect(computeHealthScore({ contextPct: 30, turnCount: 2, growthRate: 9 }).level).toBe('healthy');
+        expect(computeHealthScore(input({ contextPct: 30, turnCount: 2, growthRate: 9 })).level).toBe('healthy');
     });
 
-    test('growth exactly 8 = healthy (not triggered)', () => {
-        expect(computeHealthScore({ contextPct: 40, turnCount: 2, growthRate: 8 }).level).toBe('healthy');
+    test('growth exactly 8 = not triggered', () => {
+        expect(computeHealthScore(input({ contextPct: 40, turnCount: 2, growthRate: 8 })).level).toBe('healthy');
     });
 
-    test('remaining messages calculation in coaching', () => {
-        const result = computeHealthScore({ contextPct: 40, turnCount: 2, growthRate: 10 });
-        expect(result.coaching).toMatch(/~6 messages/);
+    test('remaining-messages calculation lands in coaching', () => {
+        // Sonnet 4.5 warn=50, ctx=40, growth=10 -> headroom 10, ~1 message.
+        const result = computeHealthScore(input({ contextPct: 40, turnCount: 2, growthRate: 10 }));
+        expect(result.coaching).toMatch(/messages? until/);
     });
 });
 
-// ── Rule 5 (high turn count alone = degrading) ─────────────────────────────
+// ── Long-conversation secondary signal ─────────────────────────────────────
 
-describe('computeHealthScore: Rule 5 (turns > 30)', () => {
+describe('long-conversation secondary', () => {
     test('31 turns with low context = degrading', () => {
-        expect(computeHealthScore({ contextPct: 10, turnCount: 31, growthRate: null }).level).toBe('degrading');
+        expect(computeHealthScore(input({ contextPct: 10, turnCount: TURN_CRITICAL_CEIL + 1 })).level).toBe('degrading');
     });
 
-    test('30 turns with low context = healthy', () => {
-        expect(computeHealthScore({ contextPct: 10, turnCount: 30, growthRate: null }).level).toBe('healthy');
+    test('30 turns with low context = healthy (below threshold)', () => {
+        expect(computeHealthScore(input({ contextPct: 10, turnCount: TURN_CRITICAL_CEIL })).level).toBe('healthy');
     });
 });
 
-// ── Rule 6 (healthy default) ───────────────────────────────────────────────
+// ── Healthy default ────────────────────────────────────────────────────────
 
-describe('computeHealthScore: healthy default', () => {
-    test('fresh conversation = healthy', () => {
-        const result = computeHealthScore({ contextPct: 0, turnCount: 0, growthRate: null });
-        expect(result.level).toBe('healthy');
-        expect(result.coaching).toMatch(/fresh/i);
+describe('healthy default', () => {
+    test('fresh conversation = healthy with fresh-and-responsive copy', () => {
+        const h = computeHealthScore(input({ contextPct: 0, turnCount: 0 }));
+        expect(h.level).toBe('healthy');
+        expect(h.coaching).toMatch(/fresh/i);
     });
 
-    test('moderate context below 30% gets "plenty of room" coaching', () => {
-        const result = computeHealthScore({ contextPct: 0, turnCount: 0, growthRate: null });
-        expect(result.coaching).toMatch(/fresh and responsive/i);
-    });
-
-    test('context above 30% but below 50% shows percentage', () => {
-        const result = computeHealthScore({ contextPct: 35, turnCount: 2, growthRate: null });
-        expect(result.coaching).toMatch(/35%/);
-        expect(result.coaching).toMatch(/plenty of room/i);
+    test('moderate context (35%) below warn shows percentage in coaching', () => {
+        const h = computeHealthScore(input({ contextPct: 35, turnCount: 2 }));
+        expect(h.coaching).toMatch(/35%/);
     });
 });
 
@@ -120,17 +172,17 @@ describe('computeHealthScore: healthy default', () => {
 
 describe('computeHealthScore: output shape', () => {
     test('contextPct is passed through unchanged', () => {
-        expect(computeHealthScore({ contextPct: 42.5, turnCount: 0, growthRate: null }).contextPct).toBe(42.5);
+        expect(computeHealthScore(input({ contextPct: 42.5 })).contextPct).toBe(42.5);
     });
 
     test('label is always a non-empty string', () => {
         const inputs: HealthInput[] = [
-            { contextPct: 0, turnCount: 0, growthRate: null },
-            { contextPct: 50, turnCount: 15, growthRate: null },
-            { contextPct: 95, turnCount: 50, growthRate: 20 },
+            input({ contextPct: 0 }),
+            input({ contextPct: 50, turnCount: 15 }),
+            input({ contextPct: 95, turnCount: 50, growthRate: 20 }),
         ];
-        for (const input of inputs) {
-            const result = computeHealthScore(input);
+        for (const i of inputs) {
+            const result = computeHealthScore(i);
             expect(result.label.length).toBeGreaterThan(0);
             expect(result.coaching.length).toBeGreaterThan(0);
         }
@@ -157,17 +209,14 @@ describe('computeGrowthRate', () => {
     });
 
     test('correct average for uniform growth', () => {
-        // 10 -> 20 -> 30: two steps, each +10
         expect(computeGrowthRate([10, 20, 30])).toBeCloseTo(10, 5);
     });
 
     test('only counts upward deltas', () => {
-        // 10 -> 5 -> 15: only one upward delta (+10), average = 10
         expect(computeGrowthRate([10, 5, 15])).toBeCloseTo(10, 5);
     });
 
     test('mixed growth and decline', () => {
-        // 10 -> 20 -> 15 -> 25: upward deltas: +10, +10. Average = 10
         expect(computeGrowthRate([10, 20, 15, 25])).toBeCloseTo(10, 5);
     });
 });
@@ -176,16 +225,16 @@ describe('computeGrowthRate', () => {
 
 describe('purity', () => {
     test('same input produces identical output', () => {
-        const input: HealthInput = { contextPct: 55, turnCount: 12, growthRate: 5 };
-        const a = computeHealthScore(input);
-        const b = computeHealthScore(input);
+        const i: HealthInput = input({ contextPct: 55, turnCount: 12, growthRate: 5 });
+        const a = computeHealthScore(i);
+        const b = computeHealthScore(i);
         expect(a).toEqual(b);
     });
 
     test('input object is not mutated', () => {
-        const input: HealthInput = { contextPct: 55, turnCount: 12, growthRate: 5 };
-        const frozen = { ...input };
-        computeHealthScore(input);
-        expect(input).toEqual(frozen);
+        const i: HealthInput = input({ contextPct: 55, turnCount: 12, growthRate: 5 });
+        const frozen = { ...i };
+        computeHealthScore(i);
+        expect(i).toEqual(frozen);
     });
 });

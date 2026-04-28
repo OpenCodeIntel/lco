@@ -114,6 +114,8 @@ describe('memory: full agent pipeline', () => {
                 contextPct,
                 turnCount: i + 1,
                 growthRate: growth ?? 0,
+                model: 'claude-sonnet-4-6-20250514',
+                isDetailHeavy: false,
             });
 
             // Context intelligence

@@ -72,6 +72,38 @@ export const SHORT_FOLLOWUP_MAX_CHARS = 50;
 /** Number of consecutive short follow-ups required to trigger the chain signal. */
 export const FOLLOWUP_CHAIN_MIN_COUNT = 3;
 
+/**
+ * Keywords that signal the user wants precise, exhaustive recall on the
+ * conversation so far. When these appear, retrieval failure cost is high,
+ * and the context-rot agent shifts the warn/critical thresholds earlier.
+ *
+ * Substring match, case-insensitive (plain `String.prototype.includes`
+ * after a single `toLowerCase` on the prompt). Substring rather than
+ * word-bounded because words like "exact" should still match inside
+ * "exactly", "exactness", etc., without us listing every inflection.
+ *
+ * Tuned conservatively: bare "every" and "all" appear constantly in
+ * prose ("every user", "I tried all the suggestions") and would flood
+ * the warning if treated as triggers on their own. We pair them with
+ * specific nouns ("every detail", "all details", "list every", "list
+ * all") so the trigger only fires when the user is plausibly asking
+ * for exhaustive recall.
+ */
+export const DETAIL_HEAVY_KEYWORDS: ReadonlyArray<string> = [
+    'exact',
+    'exactly',
+    'precise',
+    'precisely',
+    'verbatim',
+    'exhaustive',
+    'complete list',
+    'full list',
+    'list every',
+    'list all',
+    'every detail',
+    'all details',
+] as const;
+
 // ── Model classification ────────────────────────────────────────────────────
 
 /**
@@ -111,6 +143,41 @@ export interface DeltaPromptContext {
     /** Estimated session % this turn would cost on Haiku, derived from token
      *  economics medians. Null if Haiku has insufficient samples. */
     haikuMedianDelta: number | null;
+}
+
+// ── Detail-heavy detection ──────────────────────────────────────────────────
+
+/**
+ * Returns true if the prompt demands precise / exhaustive recall on prior
+ * context. Two independent signals; either one trips the flag:
+ *
+ *   1. The prompt contains a fenced code block. Code-bearing turns almost
+ *      always need exact details from earlier (variable names, line
+ *      numbers, error messages). Any code fence trips it.
+ *   2. The prompt contains one of the DETAIL_HEAVY_KEYWORDS, matched
+ *      case-insensitively as a substring (the keywords are already
+ *      multi-word or distinct enough that simple substring is safe).
+ *
+ * Pure function. No allocation in the hot path beyond the lowercase copy
+ * needed for case-insensitive matching, and that copy is O(n) on prompt
+ * length which dwarfs anything in this loop.
+ *
+ * Why this lives here and not in context-rot-thresholds.ts: prompt
+ * inspection is the Prompt Agent's job. The rot agent consumes a flag,
+ * not raw text. Keeps each agent focused on one input shape.
+ */
+export function isDetailHeavy(promptText: string): boolean {
+    if (!promptText) return false;
+
+    // Code fence check first: cheapest, no allocation.
+    if (promptText.includes('```')) return true;
+
+    // Lowercase once for the keyword scan.
+    const haystack = promptText.toLowerCase();
+    for (const keyword of DETAIL_HEAVY_KEYWORDS) {
+        if (haystack.includes(keyword)) return true;
+    }
+    return false;
 }
 
 // ── Analysis ────────────────────────────────────────────────────────────────

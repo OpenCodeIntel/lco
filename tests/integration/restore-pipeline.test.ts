@@ -47,6 +47,8 @@ function restoreConversation(record: ConversationRecord): {
         contextPct: convState.contextPct,
         turnCount: convState.turnCount,
         growthRate: computeGrowthRate(convState.contextHistory),
+        model: convState.model,
+        isDetailHeavy: false,
     });
     state = { ...state, health };
 
@@ -95,6 +97,8 @@ function applyStreamCompleteAfterRestore(
             contextPct: cumulativeContextPct,
             turnCount: convState.turnCount,
             growthRate: computeGrowthRate(convState.contextHistory),
+            model: msg.model,
+            isDetailHeavy: false,
         }),
     };
 

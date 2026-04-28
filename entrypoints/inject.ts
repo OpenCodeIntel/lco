@@ -103,6 +103,7 @@ export default defineUnlistedScript(() => {
             promptLength?: number;
             hasCodeBlock?: boolean;
             isShortFollowUp?: boolean;
+            isDetailHeavy?: boolean;
             organizationId?: string;
             draftCharCount?: number;
         }) {
@@ -424,6 +425,24 @@ export default defineUnlistedScript(() => {
                 const hasCodeBlock = promptText.includes('```');
                 const isShortFollowUp = promptText.length > 0 && promptText.length < 50; // mirrors SHORT_FOLLOWUP_MAX_CHARS
 
+                // Detail-heavy detection. Mirrors lib/prompt-analysis.ts isDetailHeavy()
+                // and DETAIL_HEAVY_KEYWORDS. Inject.ts cannot import from lib/, so the
+                // keyword list is duplicated here. If you change either side, change both.
+                // Code fences are treated as detail-heavy without a keyword scan.
+                const detailHeavyKeywords = [
+                    'exact', 'exactly', 'precise', 'precisely', 'verbatim',
+                    'exhaustive',
+                    'complete list', 'full list', 'list every', 'list all',
+                    'every detail', 'all details',
+                ];
+                let isDetailHeavy = hasCodeBlock;
+                if (!isDetailHeavy && promptText.length > 0) {
+                    const lowered = promptText.toLowerCase();
+                    for (const keyword of detailHeavyKeywords) {
+                        if (lowered.includes(keyword)) { isDetailHeavy = true; break; }
+                    }
+                }
+
                 // Send final complete event to the content script bridge
                 postSecureBatch({
                     type: 'STREAM_COMPLETE',
@@ -435,6 +454,7 @@ export default defineUnlistedScript(() => {
                     promptLength,
                     hasCodeBlock,
                     isShortFollowUp,
+                    isDetailHeavy,
                     ...(orgId ? { organizationId: orgId } : {}),
                 });
 

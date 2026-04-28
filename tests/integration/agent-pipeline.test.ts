@@ -95,6 +95,8 @@ describe('agent pipeline: healthy mid-conversation', () => {
         contextPct: convState.contextPct,
         turnCount: convState.turnCount,
         growthRate: computeGrowthRate(convState.contextHistory),
+        model: MODEL,
+        isDetailHeavy: false,
     });
 
     it('pricing agent returns a non-null cost', () => {
@@ -125,9 +127,13 @@ describe('agent pipeline: healthy mid-conversation', () => {
         expect(stale).toBeUndefined();
     });
 
-    it('health agent returns healthy (12 turns, 55% context)', () => {
-        // contextPct(55) < HEALTHY_CEIL(70): below threshold, healthy by default
-        expect(health.level).toBe('healthy');
+    it('health agent returns degrading (12 turns, 55% context on Sonnet 4.6)', () => {
+        // Per-model thresholds (GET-28). Sonnet 4.6 warn = 60, but Rule 6
+        // (turn-aware degrading floor = warn - 10 = 50) trips when context
+        // is within 10 points of warn AND turnCount > TURN_HEALTHY_CEIL.
+        // 55% with 12 turns satisfies both, so the indicator surfaces
+        // attention-valley risk before the per-model warn fires.
+        expect(health.level).toBe('degrading');
     });
 
     it('delta coach returns no critical signals at 62% session', () => {
@@ -159,6 +165,8 @@ describe('agent pipeline: degrading mid-conversation', () => {
         contextPct: convState.contextPct,
         turnCount: convState.turnCount,
         growthRate: computeGrowthRate(convState.contextHistory),
+        model: MODEL,
+        isDetailHeavy: false,
     });
 
     it('health agent returns degrading (12 turns, 75% context)', () => {
@@ -186,6 +194,8 @@ describe('agent pipeline: critical conversation', () => {
         contextPct: 85,
         turnCount: 25,
         growthRate: computeGrowthRate(convState.contextHistory),
+        model: MODEL,
+        isDetailHeavy: false,
     });
     const deltaSignals = analyzeDelta(makeDeltaInput({
         sessionPct: 88,
@@ -315,7 +325,7 @@ describe('agent pipeline: agent isolation', () => {
     });
 
     it('health agent handles edge case of 0% context', () => {
-        const health = computeHealthScore({ contextPct: 0, turnCount: 0, growthRate: null });
+        const health = computeHealthScore({ contextPct: 0, turnCount: 0, growthRate: null, model: MODEL, isDetailHeavy: false });
         expect(health.level).toBe('healthy');
     });
 
@@ -332,7 +342,7 @@ describe('agent pipeline: agent isolation', () => {
         const deltaSigs = analyzeDelta({
             currentDelta: null, recentDeltas: [], sessionPct: 0, firstTurnDelta: null, turnCount: 0,
         });
-        const health = computeHealthScore({ contextPct: 0, turnCount: 0, growthRate: null });
+        const health = computeHealthScore({ contextPct: 0, turnCount: 0, growthRate: null, model: MODEL, isDetailHeavy: false });
         const cost = calculateCost(0, 0, 'unknown');
         const preSubmit = computePreSubmitEstimate({
             draftCharCount: 0, model: 'unknown', pctPerInputToken: null, currentSessionPct: 0,
@@ -429,7 +439,7 @@ describe('agent pipeline: consistency between agents', () => {
             Array.from({ length: turnCount }, (_, i) => (i + 1) * 3.4),
         );
 
-        const health = computeHealthScore({ contextPct, turnCount, growthRate });
+        const health = computeHealthScore({ contextPct, turnCount, growthRate, model: MODEL, isDetailHeavy: false });
         const contextSignals = analyzeContext({
             turnCount,
             contextPct,
@@ -446,7 +456,7 @@ describe('agent pipeline: consistency between agents', () => {
     });
 
     it('healthy health at low context means no threshold signals', () => {
-        const health = computeHealthScore({ contextPct: 10, turnCount: 3, growthRate: null });
+        const health = computeHealthScore({ contextPct: 10, turnCount: 3, growthRate: null, model: MODEL, isDetailHeavy: false });
         const signals = analyzeContext({
             turnCount: 3,
             contextPct: 10,

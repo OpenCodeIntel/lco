@@ -97,15 +97,15 @@ describe('pricing', () => {
 
 describe('health score', () => {
     bench('computeHealthScore - healthy', () => {
-        computeHealthScore({ contextPct: 30, turnCount: 5, growthRate: 3 });
+        computeHealthScore({ contextPct: 30, turnCount: 5, growthRate: 3, model: 'claude-sonnet-4-6', isDetailHeavy: false });
     });
 
     bench('computeHealthScore - degrading', () => {
-        computeHealthScore({ contextPct: 65, turnCount: 15, growthRate: 6 });
+        computeHealthScore({ contextPct: 65, turnCount: 15, growthRate: 6, model: 'claude-sonnet-4-6', isDetailHeavy: false });
     });
 
     bench('computeHealthScore - critical', () => {
-        computeHealthScore({ contextPct: 92, turnCount: 25, growthRate: 10 });
+        computeHealthScore({ contextPct: 92, turnCount: 25, growthRate: 10, model: 'claude-sonnet-4-6', isDetailHeavy: false });
     });
 
     bench('computeGrowthRate - 12 data points', () => {
@@ -227,7 +227,7 @@ describe('full agent pipeline (single turn)', () => {
         calculateCost(3400, 1200, 'claude-sonnet-4-6-20250514');
         // Health
         const growth = computeGrowthRate(CONVERSATION_STATE.contextHistory);
-        computeHealthScore({ contextPct: 65, turnCount: 12, growthRate: growth ?? 0 });
+        computeHealthScore({ contextPct: 65, turnCount: 12, growthRate: growth ?? 0, model: 'claude-sonnet-4-6-20250514', isDetailHeavy: false });
         // Context intelligence
         const ctxSignals = analyzeContext(CONVERSATION_STATE);
         // Prompt analysis

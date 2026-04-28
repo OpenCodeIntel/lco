@@ -109,6 +109,8 @@ function processMessage(session: SessionAccumulator, msg: MessageSpec): SessionA
         contextPct,
         turnCount,
         growthRate: computeGrowthRate(contextHistory),
+        model: msg.model,
+        isDetailHeavy: false,
     });
 
     overlayState = {

@@ -1,4 +1,5 @@
 // lib/health-score.ts
+//
 // Pure function: conversation metadata -> human-readable health assessment.
 // No DOM refs, no chrome APIs, no side effects.
 //
@@ -6,10 +7,47 @@
 // (Healthy / Degrading / Critical) and a one-line coaching message that
 // tells the user exactly what is happening and what to do about it.
 //
-// Based on the Chroma context rot research (2025): every frontier LLM
-// shows a U-shaped attention curve. Models attend strongly to the beginning
-// and end of context, and poorly to the middle. Performance degrades as
-// context grows, especially past 50% utilization with high turn counts.
+// ── How the score is computed (READ THIS BEFORE EDITING) ────────────────
+//
+// Two independent classifiers run in sequence, and the more severe of
+// the two wins:
+//
+//   1. PRIMARY (per-model utilization). The conversation's context % is
+//      compared to model-specific warn / critical thresholds from
+//      context-rot-thresholds.ts. This is the load-bearing signal.
+//      Anthropic's published MRCR scores ground the thresholds where they
+//      exist; otherwise we use Saar coaching defaults documented in
+//      docs/context-rot-thresholds-spec.md.
+//
+//   2. SECONDARY (turn count and growth rate). A long conversation with
+//      few tokens, or a fast-filling short conversation, deserves
+//      coaching even before the per-model threshold trips. These are
+//      weaker signals so they cannot escalate above the primary level
+//      they would otherwise produce, except for one explicit boost:
+//      already-degrading + very-long-convo escalates to critical because
+//      the attention valley research suggests retrieval is falling apart
+//      regardless of model class.
+//
+// Detail-heavy adjustment: when the user's last prompt demanded precision
+// (code blocks, precision keywords), the per-model warn / crit thresholds
+// shift earlier. The shift is applied once, in the threshold lookup, so
+// every rule below sees the adjusted numbers without special-casing.
+//
+// Coaching copy comes from context-rot-thresholds.ts when the primary
+// classifier fires (model-aware, evidence-grounded). When a secondary
+// rule fires alone, we use generic copy that names the model but does
+// not invent threshold-specific claims. This keeps copy honest: we never
+// quote an MRCR figure on a turn-count-driven warning.
+// ─────────────────────────────────────────────────────────────────────────
+
+import {
+    ABSOLUTE_CRITICAL_FLOOR,
+    LOW_CONTEXT_REASSURANCE_CEIL,
+    getEffectiveThresholds,
+    getRotCoaching,
+    getRotProfile,
+    getRotZone,
+} from './context-rot-thresholds';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,84 +65,159 @@ export interface HealthScore {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-// Context thresholds (percentage of context window).
-export const HEALTHY_CEIL = 70;
-export const DEGRADING_CEIL = 90;
+/**
+ * Absolute floor: any conversation at or above this context % is critical
+ * regardless of model. Re-exported from context-rot-thresholds.ts so the
+ * legacy "DEGRADING_CEIL = 90" assertions in audit tests keep working
+ * without binding the test file to the new agent path.
+ */
+export const DEGRADING_CEIL = ABSOLUTE_CRITICAL_FLOOR;
 
-// Turn count thresholds. High turn count amplifies context rot.
+/**
+ * Legacy default warn threshold. Pre-GET-28, this was the single
+ * model-agnostic warn ceiling. Now superseded by per-model thresholds in
+ * context-rot-thresholds.ts. Kept exported for tests and call sites that
+ * still reference it as a sentinel value, NOT used by computeHealthScore.
+ */
+export const HEALTHY_CEIL = 70;
+
+// Turn count thresholds. Long conversations develop attention drift even
+// when context is low, per the U-shaped attention curve from the Chroma
+// 2025 context-rot research.
 export const TURN_HEALTHY_CEIL = 10;
 export const TURN_DEGRADING_CEIL = 20;
 export const TURN_CRITICAL_CEIL = 30;
 
-// Growth rate threshold (% per turn). Fast-filling conversations degrade sooner.
+/**
+ * Growth rate threshold (% per turn). A conversation filling at this rate
+ * or faster is on track to hit the per-model warn threshold within a
+ * handful of messages. Triggers a forward-looking warning before the
+ * primary classifier would fire.
+ */
 export const FAST_GROWTH_PCT = 8;
+
+/**
+ * How far below the per-model warn threshold the turn-aware degrading
+ * rule (Rule 6) starts firing. With warn = 60 (Sonnet 4.6) and offset =
+ * 10, a 12-turn conversation at 50%+ context is degrading even though
+ * it has not yet crossed the per-model warn. Rationale: the attention
+ * valley research shows fidelity erodes as turns accumulate, and the
+ * 10-point band gives the indicator room to coach the user before the
+ * primary classifier trips.
+ */
+export const TURN_AWARE_WARN_OFFSET = 10;
 
 // ── Score computation ─────────────────────────────────────────────────────────
 
 export interface HealthInput {
-    contextPct: number;     // 0-100
+    /** Current context utilization, 0 to 100, as a % of the model's window. */
+    contextPct: number;
+    /** Number of user-assistant turn pairs so far. */
     turnCount: number;
-    growthRate: number | null;  // avg % per turn, null if insufficient data
+    /** Average upward growth per turn (% per turn), or null if insufficient data. */
+    growthRate: number | null;
+    /**
+     * Model name as reported by the SSE message_start event (e.g.
+     * 'claude-sonnet-4-6-20250514'). Used to look up per-model warn /
+     * critical thresholds and to name the model in coaching copy. Pass
+     * an empty string for unknown models; the agent will fall back to
+     * a conservative 200k / 50% / 75% profile.
+     */
+    model: string;
+    /**
+     * True when the most recent prompt demanded precise / exhaustive
+     * recall (code blocks or precision keywords). Computed by
+     * lib/prompt-analysis.ts isDetailHeavy(). Shifts the per-model warn
+     * and critical thresholds earlier by DETAIL_HEAVY_ADJUSTMENT.
+     */
+    isDetailHeavy: boolean;
 }
 
 /**
  * Compute the conversation health score.
  *
- * The score combines context utilization, turn count, and growth rate.
- * A conversation can be Critical from context alone (>= DEGRADING_CEIL, 90%) or from
- * a combination of moderate context + high turn count (the "attention
- * valley" effect from context rot research).
+ * Returns the worst (most severe) of the primary per-model classifier
+ * and the secondary turn / growth heuristics. Coaching copy is sourced
+ * from the rule that won, so a turn-count-driven warning does not pretend
+ * to quote MRCR data it never used.
  */
 export function computeHealthScore(input: HealthInput): HealthScore {
-    const { contextPct, turnCount, growthRate } = input;
+    const { contextPct, turnCount, growthRate, model, isDetailHeavy } = input;
 
-    // Rule 1: Very high context is always Critical, regardless of turn count.
-    if (contextPct >= DEGRADING_CEIL) {
+    const profile = getRotProfile(model);
+    const thresholds = getEffectiveThresholds(model, isDetailHeavy);
+    const zone = getRotZone(model, contextPct, isDetailHeavy);
+
+    // Rule 1 (primary): in-rot zone is always critical. This includes the
+    // absolute 90% floor since getRotZone honors it. Coaching is the
+    // model-aware in-rot message: cites the model, mentions compaction
+    // for 1M models, points 200k models at Projects + new chat.
+    if (zone === 'in-rot') {
         return {
             level: 'critical',
             label: 'Critical',
-            coaching: 'Context nearly full. Start a new chat, or use Claude Projects for ongoing work.',
+            coaching: getRotCoaching(model, contextPct, isDetailHeavy),
             contextPct,
         };
     }
 
-    // Rule 2: High context + many turns = Critical.
-    // The "attention valley": past TURN_DEGRADING_CEIL turns with >= HEALTHY_CEIL (70%) context,
-    // Claude's attention to mid-conversation details degrades measurably.
-    if (contextPct >= HEALTHY_CEIL && turnCount > TURN_DEGRADING_CEIL) {
+    // Rule 2 (secondary boost): if we are already in the approaching zone
+    // AND the conversation is past TURN_DEGRADING_CEIL turns, we promote
+    // to critical. Rationale: the per-model warn threshold is the point
+    // where retrieval starts dropping; combined with a deep conversation,
+    // the user is statistically losing fidelity from earlier turns even
+    // if the percentage alone would not yet trip critical.
+    if (zone === 'approaching' && turnCount > TURN_DEGRADING_CEIL) {
         return {
             level: 'critical',
             label: 'Critical',
-            coaching: `${turnCount} turns deep. Claude has likely lost detail from early messages.`,
+            coaching: `${turnCount} turns deep on ${profile.label}. Earlier details are likely missing from recall. Start a new chat.`,
             contextPct,
         };
     }
 
-    // Rule 3: Moderate context + moderate turns = Degrading.
-    if (contextPct >= HEALTHY_CEIL && turnCount > TURN_HEALTHY_CEIL) {
+    // Rule 3 (primary): approaching zone without the turn boost is
+    // degrading. Use the per-model coaching string, which decides whether
+    // to cite MRCR, mention compaction, or push toward Projects.
+    if (zone === 'approaching') {
         return {
             level: 'degrading',
             label: 'Degrading',
-            coaching: 'Earlier details may be fading. Consider starting fresh soon.',
+            coaching: getRotCoaching(model, contextPct, isDetailHeavy),
             contextPct,
         };
     }
 
-    // Rule 4: Fast growth rate with meaningful context = Degrading.
-    // Even at low turn counts, a conversation filling at >8%/turn will hit
-    // Critical within a few more messages.
-    if (growthRate !== null && growthRate > FAST_GROWTH_PCT && contextPct > 30) {
-        const remaining = Math.max(0, Math.round((100 - contextPct) / growthRate));
+    // ── At this point the primary classifier says "healthy". Secondary
+    // signals can downgrade to "degrading" but never to "critical" on
+    // their own; the primary classifier is the only path to red. ──
+
+    // Rule 4 (secondary): fast growth at meaningful context is degrading.
+    // We only fire above LOW_CONTEXT_REASSURANCE_CEIL because tiny chats
+    // can show large per-turn growth as a percentage with no real risk.
+    // The remaining-messages estimate uses the post-detail-heavy warn
+    // threshold so it answers "messages until we hit the warning", not
+    // "messages until we exhaust the entire window".
+    if (growthRate !== null && growthRate > FAST_GROWTH_PCT && contextPct > LOW_CONTEXT_REASSURANCE_CEIL) {
+        const headroom = Math.max(0, thresholds.warnAtPct - contextPct);
+        // Floor the displayed count at 1: a "0 messages" warning is silly
+        // when the rule has already decided we should warn. Rounding can
+        // produce 0 when headroom < growthRate / 2 (e.g. headroom=2pp,
+        // growthRate=9pp/turn -> 0.22 -> 0). Show "1 message" instead.
+        const rawRemaining = Math.round(headroom / growthRate);
+        const remaining = Math.max(1, rawRemaining);
+        const target = remaining === 1 ? 'message' : 'messages';
         return {
             level: 'degrading',
             label: 'Degrading',
-            coaching: `Filling fast. ~${remaining} message${remaining === 1 ? '' : 's'} until context limit.`,
+            coaching: `Filling fast on ${profile.label}. About ${remaining} ${target} until the rot zone.`,
             contextPct,
         };
     }
 
-    // Rule 5: High turn count alone (even with low context) = mild Degrading.
-    // Very long conversations develop attention drift regardless of context %.
+    // Rule 5 (secondary): very long conversations develop attention drift
+    // even at low utilization. The turn ceiling is generic; no model
+    // claim attached.
     if (turnCount > TURN_CRITICAL_CEIL) {
         return {
             level: 'degrading',
@@ -114,13 +227,31 @@ export function computeHealthScore(input: HealthInput): HealthScore {
         };
     }
 
-    // Default: Healthy.
+    // Rule 6 (degrading boost from turns at high-but-healthy context):
+    // when context is moderate AND we are past TURN_HEALTHY_CEIL, the
+    // attention valley starts kicking in even before the per-model warn.
+    // Threshold: anything within TURN_AWARE_WARN_OFFSET points of warn
+    // (so a Sonnet 4.5 user at 45% with 12 turns trips this; an Opus
+    // 4.7 user at 45% with 12 turns does not, because warn = 65). This
+    // preserves the legacy "70% + 11 turns = degrading" coverage without
+    // locking it to 70.
+    const turnAwareWarnFloor = thresholds.warnAtPct - TURN_AWARE_WARN_OFFSET;
+    if (contextPct >= turnAwareWarnFloor && turnCount > TURN_HEALTHY_CEIL && contextPct > LOW_CONTEXT_REASSURANCE_CEIL) {
+        return {
+            level: 'degrading',
+            label: 'Degrading',
+            coaching: `${turnCount} turns into ${profile.label}. Earlier details may be fading; consider starting fresh soon.`,
+            contextPct,
+        };
+    }
+
+    // Default: healthy. Use the per-model coaching for both the very-low
+    // case (returns "fresh and responsive") and the moderate case
+    // (returns "X% of {label}'s {window} window used. Plenty of room.").
     return {
         level: 'healthy',
         label: 'Healthy',
-        coaching: contextPct > 30
-            ? `${contextPct.toFixed(0)}% context used. Plenty of room.`
-            : 'Conversation is fresh and responsive.',
+        coaching: getRotCoaching(model, contextPct, isDetailHeavy),
         contextPct,
     };
 }

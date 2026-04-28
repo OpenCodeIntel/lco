@@ -33,6 +33,7 @@ export function isValidBridgeSchema(data: any): boolean {
             if (data.promptLength !== undefined && typeof data.promptLength !== 'number') return false;
             if (data.hasCodeBlock !== undefined && typeof data.hasCodeBlock !== 'boolean') return false;
             if (data.isShortFollowUp !== undefined && typeof data.isShortFollowUp !== 'boolean') return false;
+            if (data.isDetailHeavy !== undefined && typeof data.isDetailHeavy !== 'boolean') return false;
         }
     }
 

@@ -182,6 +182,14 @@ async function initializeMonitoring(): Promise<void> {
     // Resets on SPA navigation alongside other conversation state.
     let consecutiveShortFollowUps = 0;
 
+    // Whether the last sent prompt demanded precise / exhaustive recall on
+    // prior context (code blocks or precision keywords). Used by the Health
+    // Agent to shift its per-model warn and critical thresholds earlier, see
+    // lib/context-rot-thresholds.ts. Computed in inject.ts on STREAM_COMPLETE
+    // and forwarded via the bridge so raw prompt text never crosses worlds.
+    // Resets on SPA navigation alongside other conversation state.
+    let lastDetailHeavy = false;
+
     // Last known 5-hour session utilization from the Anthropic usage endpoint.
     // Snapshot before each stream, then read again after STREAM_COMPLETE to
     // compute the exact session % consumed by that message (delta tracking).
@@ -249,10 +257,14 @@ async function initializeMonitoring(): Promise<void> {
             // buildConvStateFromRecord receives it to avoid duplication.
             state = applyRestoredConversation(state, record, null);
             convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+            // Restore path: we don't have the live draft so detail-heavy is
+            // false. Model comes from the stored conversation record.
             const health = computeHealthScore({
                 contextPct: convState.contextPct,
                 turnCount: convState.turnCount,
                 growthRate: computeGrowthRate(convState.contextHistory),
+                model: convState.model,
+                isDetailHeavy: false,
             });
             state = { ...state, health };
         }
@@ -283,10 +295,14 @@ async function initializeMonitoring(): Promise<void> {
                 cumulativeCost = record.estimatedCost ?? 0;
                 state = applyRestoredConversation(state, record, null);
                 convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+                // Async restore path. Same reasoning as the synchronous restore
+                // block above: detail-heavy unknown -> false; model from record.
                 const health = computeHealthScore({
                     contextPct: convState.contextPct,
                     turnCount: convState.turnCount,
                     growthRate: computeGrowthRate(convState.contextHistory),
+                    model: convState.model,
+                    isDetailHeavy: false,
                 });
                 state = { ...state, health };
                 overlay.render(state);
@@ -429,6 +445,13 @@ async function initializeMonitoring(): Promise<void> {
                 contextWindow: ctxWindow,
             };
 
+            // Update the cached detail-heavy flag from this turn's prompt
+            // characteristics (inject.ts sets msg.isDetailHeavy from the live
+            // promptText; raw text never crosses the bridge). The Health
+            // Agent reads this to shift its per-model thresholds when the
+            // user is asking for precise / exhaustive recall.
+            lastDetailHeavy = msg.isDetailHeavy ?? false;
+
             // Compute full next state in one step, render once.
             state = {
                 ...applyStreamComplete(state, msg),
@@ -443,6 +466,8 @@ async function initializeMonitoring(): Promise<void> {
                     contextPct: currentContextPct,
                     turnCount: convState.turnCount,
                     growthRate: computeGrowthRate(convState.contextHistory),
+                    model: msg.model,
+                    isDetailHeavy: lastDetailHeavy,
                 }),
             };
             overlay.render(state);
@@ -976,6 +1001,7 @@ async function initializeMonitoring(): Promise<void> {
             cumulativeOutput = 0;
             cumulativeCost = 0;
             consecutiveShortFollowUps = 0;
+            lastDetailHeavy = false;
             deltaHistory = [];
             firstTurnDelta = null;
             dismissed = new Set();
@@ -1006,10 +1032,16 @@ async function initializeMonitoring(): Promise<void> {
                     cumulativeCost = record.estimatedCost ?? 0;
                     state = applyRestoredConversation(state, record, null);
                     convState = buildConvStateFromRecord(record, state.contextPct ?? 0);
+                    // SPA navigation restore. New conversation, no live draft
+                    // text, so detail-heavy resets to false here. Model from
+                    // the stored record. The next STREAM_COMPLETE on the new
+                    // conversation will refresh both fields.
                     const health = computeHealthScore({
                         contextPct: convState.contextPct,
                         turnCount: convState.turnCount,
                         growthRate: computeGrowthRate(convState.contextHistory),
+                        model: convState.model,
+                        isDetailHeavy: false,
                     });
                     state = { ...state, health };
                     overlay.render(state);

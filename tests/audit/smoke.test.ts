@@ -38,7 +38,7 @@ describe('smoke: imports resolve and basic calls succeed', () => {
     });
 
     test('health-score: computeHealthScore returns valid shape', () => {
-        const result = computeHealthScore({ contextPct: 10, turnCount: 2, growthRate: null });
+        const result = computeHealthScore({ contextPct: 10, turnCount: 2, growthRate: null, model: 'claude-sonnet-4-6', isDetailHeavy: false });
         expect(result.level).toBe('healthy');
         expect(typeof result.label).toBe('string');
         expect(typeof result.coaching).toBe('string');

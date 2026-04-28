@@ -181,17 +181,17 @@ describe('number fuzz: calculateCost', () => {
 describe('number fuzz: computeHealthScore', () => {
     for (const pct of numFuzz) {
         test(`contextPct=${pct} does not throw`, () => {
-            expect(() => computeHealthScore({ contextPct: pct, turnCount: 5, growthRate: null })).not.toThrow();
+            expect(() => computeHealthScore({ contextPct: pct, turnCount: 5, growthRate: null, model: 'claude-sonnet-4-6', isDetailHeavy: false })).not.toThrow();
         });
     }
     for (const turns of numFuzz) {
         test(`turnCount=${turns} does not throw`, () => {
-            expect(() => computeHealthScore({ contextPct: 50, turnCount: turns, growthRate: null })).not.toThrow();
+            expect(() => computeHealthScore({ contextPct: 50, turnCount: turns, growthRate: null, model: 'claude-sonnet-4-6', isDetailHeavy: false })).not.toThrow();
         });
     }
     for (const rate of numFuzz) {
         test(`growthRate=${rate} does not throw`, () => {
-            expect(() => computeHealthScore({ contextPct: 50, turnCount: 5, growthRate: rate })).not.toThrow();
+            expect(() => computeHealthScore({ contextPct: 50, turnCount: 5, growthRate: rate, model: 'claude-sonnet-4-6', isDetailHeavy: false })).not.toThrow();
         });
     }
 });
