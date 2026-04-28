@@ -431,7 +431,7 @@ export default defineUnlistedScript(() => {
                 // Code fences are treated as detail-heavy without a keyword scan.
                 const detailHeavyKeywords = [
                     'exact', 'exactly', 'precise', 'precisely', 'verbatim',
-                    'comprehensive', 'exhaustive',
+                    'exhaustive',
                     'complete list', 'full list', 'list every', 'list all',
                     'every detail', 'all details',
                 ];

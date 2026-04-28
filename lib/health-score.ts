@@ -42,6 +42,7 @@
 
 import {
     ABSOLUTE_CRITICAL_FLOOR,
+    LOW_CONTEXT_REASSURANCE_CEIL,
     getEffectiveThresholds,
     getRotCoaching,
     getRotProfile,
@@ -94,13 +95,6 @@ export const TURN_CRITICAL_CEIL = 30;
  * primary classifier would fire.
  */
 export const FAST_GROWTH_PCT = 8;
-
-/**
- * Above this context %, we suppress the "fresh and responsive" / "plenty
- * of room" copy and start showing the explicit percentage. Below it, we
- * keep coaching minimal so the indicator does not nag on short chats.
- */
-const LOW_CONTEXT_REASSURANCE_CEIL = 30;
 
 /**
  * How far below the per-model warn threshold the turn-aware degrading
@@ -206,7 +200,12 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     // "messages until we exhaust the entire window".
     if (growthRate !== null && growthRate > FAST_GROWTH_PCT && contextPct > LOW_CONTEXT_REASSURANCE_CEIL) {
         const headroom = Math.max(0, thresholds.warnAtPct - contextPct);
-        const remaining = Math.max(0, Math.round(headroom / growthRate));
+        // Floor the displayed count at 1: a "0 messages" warning is silly
+        // when the rule has already decided we should warn. Rounding can
+        // produce 0 when headroom < growthRate / 2 (e.g. headroom=2pp,
+        // growthRate=9pp/turn -> 0.22 -> 0). Show "1 message" instead.
+        const rawRemaining = Math.round(headroom / growthRate);
+        const remaining = Math.max(1, rawRemaining);
         const target = remaining === 1 ? 'message' : 'messages';
         return {
             level: 'degrading',

@@ -193,9 +193,9 @@ Direct, action-first.
 
 ### Things the copy never says
 
-- `/compact` — that is a Claude Code slash command and does not exist
+- `/compact`. That is a Claude Code slash command and does not exist
   on claude.ai web. Mentioning it would teach the wrong action.
-- "Anthropic recommends starting fresh at X%." — Anthropic does not
+- "Anthropic recommends starting fresh at X%." Anthropic does not
   publish that recommendation. The action is Saar's.
 - A specific MRCR figure for any model whose profile does not carry
   one in `mrcrAt1MPct`. The copy generator omits the citation entirely

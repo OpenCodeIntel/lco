@@ -48,11 +48,14 @@ describe('absolute critical floor', () => {
         expect(computeHealthScore(input({ contextPct: 90, model: OPUS_46 })).level).toBe('critical');
     });
 
-    test('just below DEGRADING_CEIL is not automatically critical from this rule', () => {
-        // Opus 4.6 crit=85 so 89% is still critical via per-model rule, not the floor.
-        // Use a model where 89% would not yet be critical: there is none in the
-        // table because every per-model crit <= 85. So we test the floor by going
-        // just below 90 on Opus and verifying the per-model rule (>= 85) takes over.
+    test('per-model critical fires before the absolute floor on Opus 4.6', () => {
+        // Opus 4.6 has the highest per-model crit in the table (85). At
+        // 89.9% context we are below the absolute 90% floor but already
+        // past Opus 4.6's per-model crit. The result is still critical;
+        // this asserts the per-model rule does its job before the floor
+        // ever has to step in. (No model in the table has crit > 90, so
+        // no current row tests the floor in isolation; the absolute floor
+        // is exercised separately by the 90% / 95% cases above.)
         expect(computeHealthScore(input({ contextPct: 89.9, model: OPUS_46 })).level).toBe('critical');
     });
 });

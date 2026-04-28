@@ -115,6 +115,16 @@ export const MIN_THRESHOLD_FLOOR = 30;
  */
 export const ABSOLUTE_CRITICAL_FLOOR = 90;
 
+/**
+ * Below this context % the coaching layer keeps the message minimal
+ * ("fresh and responsive") instead of spelling out the precentage. The
+ * Health Agent uses the same constant to gate its "fast growth" warning,
+ * since tiny chats can show large per-turn growth as a percentage with
+ * no real risk. Lives here so both the threshold agent's coaching copy
+ * and the health-score rule see the same value without a circular import.
+ */
+export const LOW_CONTEXT_REASSURANCE_CEIL = 30;
+
 // Source URLs pinned once. If they 404 in the spec drift test, we know.
 const URL_OPUS_4_6_ANNOUNCEMENT = 'https://www.anthropic.com/news/claude-opus-4-6';
 const URL_CONTEXT_WINDOWS_DOCS = 'https://platform.claude.com/docs/en/build-with-claude/context-windows';
@@ -253,15 +263,22 @@ export function getRotProfile(model: string): ContextRotProfile {
     if (!model) return FALLBACK_PROFILE;
     const normalized = model.toLowerCase();
 
-    // Longest-prefix scan. Table is ordered most-specific-first, but we
-    // do not rely on that: pick the longest match explicitly so adding
-    // a new row doesn't require resorting the table by hand.
+    // Longest-prefix scan with a digit-boundary check. Without the boundary
+    // a hypothetical future model name like "claude-sonnet-4-50" would
+    // falsely match the "claude-sonnet-4-5" entry, classifying it as the
+    // 200k profile. Only accept the prefix when the model name ends there
+    // OR the next character is a non-digit (typically '-' before a date
+    // suffix like "-20250514"). This way "claude-sonnet-4-5" and
+    // "claude-sonnet-4-5-20250929" both match the 4-5 row, but a future
+    // "claude-sonnet-4-50" falls through to the FALLBACK_PROFILE.
     let best: ContextRotProfile | null = null;
     for (const profile of ROT_PROFILES) {
-        if (normalized.startsWith(profile.modelPrefix)) {
-            if (best === null || profile.modelPrefix.length > best.modelPrefix.length) {
-                best = profile;
-            }
+        if (!normalized.startsWith(profile.modelPrefix)) continue;
+        const nextChar = normalized.charAt(profile.modelPrefix.length);
+        const boundaryOk = nextChar === '' || nextChar < '0' || nextChar > '9';
+        if (!boundaryOk) continue;
+        if (best === null || profile.modelPrefix.length > best.modelPrefix.length) {
+            best = profile;
         }
     }
     return best ?? FALLBACK_PROFILE;
@@ -357,7 +374,7 @@ export function getRotCoaching(
     if (zone === 'healthy') {
         // Low context: low friction. Mention the model only when there is
         // anything to say beyond "fresh".
-        if (contextPct < 30) {
+        if (contextPct < LOW_CONTEXT_REASSURANCE_CEIL) {
             return 'Conversation is fresh and responsive.';
         }
         return `${pctRounded}% of ${profile.label}'s ${windowLabel} window used. Plenty of room.`;

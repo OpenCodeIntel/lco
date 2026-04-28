@@ -77,14 +77,17 @@ export const FOLLOWUP_CHAIN_MIN_COUNT = 3;
  * conversation so far. When these appear, retrieval failure cost is high,
  * and the context-rot agent shifts the warn/critical thresholds earlier.
  *
- * Word-bounded match (case-insensitive). Single-word triggers only;
- * multi-word phrases like "list out" are matched by their salient verb
- * ("list") plus any of the precision modifiers, which is good enough
- * coverage without false-positives on prose like "list of names".
+ * Substring match, case-insensitive (plain `String.prototype.includes`
+ * after a single `toLowerCase` on the prompt). Substring rather than
+ * word-bounded because words like "exact" should still match inside
+ * "exactly", "exactness", etc., without us listing every inflection.
  *
- * Tuned conservatively: a casual "tell me everything you remember" should
- * trip this; a passing "all good?" should not. Hence "every", "all", and
- * other very common words are paired with the high-signal noun-y words.
+ * Tuned conservatively: bare "every" and "all" appear constantly in
+ * prose ("every user", "I tried all the suggestions") and would flood
+ * the warning if treated as triggers on their own. We pair them with
+ * specific nouns ("every detail", "all details", "list every", "list
+ * all") so the trigger only fires when the user is plausibly asking
+ * for exhaustive recall.
  */
 export const DETAIL_HEAVY_KEYWORDS: ReadonlyArray<string> = [
     'exact',
@@ -92,7 +95,6 @@ export const DETAIL_HEAVY_KEYWORDS: ReadonlyArray<string> = [
     'precise',
     'precisely',
     'verbatim',
-    'comprehensive',
     'exhaustive',
     'complete list',
     'full list',

@@ -61,6 +61,25 @@ describe('getRotProfile: model lookup', () => {
         expect(p.modelPrefix).toBe('claude-opus-4-6');
     });
 
+    it('does not collide on a hypothetical "claude-sonnet-4-50"', () => {
+        // Without the digit-boundary check, the naive startsWith match
+        // would classify "claude-sonnet-4-50" as the 4-5 profile (200k
+        // window), which would silently misroute a future Anthropic
+        // model into Sonnet 4.5's coaching. We expect the boundary check
+        // to reject that match and fall through to FALLBACK_PROFILE.
+        const p = getRotProfile('claude-sonnet-4-50');
+        expect(p.modelPrefix).not.toBe('claude-sonnet-4-5');
+        expect(p).toEqual(FALLBACK_PROFILE);
+    });
+
+    it('still accepts the date-suffixed form like claude-sonnet-4-5-20250929', () => {
+        // The boundary check should let through non-digit characters
+        // (typically '-' before the date suffix). Verify the canonical
+        // versioned model name still resolves to its profile.
+        const p = getRotProfile('claude-sonnet-4-5-20250929');
+        expect(p.modelPrefix).toBe('claude-sonnet-4-5');
+    });
+
     it('is case-insensitive on the input', () => {
         const lower = getRotProfile('claude-sonnet-4-6');
         const upper = getRotProfile('CLAUDE-SONNET-4-6');
