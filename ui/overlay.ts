@@ -8,6 +8,8 @@ import { OVERLAY_CSS } from './overlay-styles';
 import type { OverlayState } from '../lib/overlay-state';
 import type { ContextSignal } from '../lib/context-intelligence';
 import { classifyZone } from '../lib/usage-budget';
+import type { PreSubmitEstimate } from '../lib/pre-submit';
+import type { AttachmentBreakdownItem } from '../lib/attachment-cost';
 
 export interface OverlayHandle {
     mount(shadow: ShadowRoot): void;
@@ -26,6 +28,74 @@ function fmtCost(c: number | null): string {
     if (c === null) return '—';
     if (c < 0.00001) return '$0.00*';
     return `$${c.toFixed(4)}`;
+}
+
+/**
+ * Compact token formatter for the draft row: 1234 -> "1.2k", 1234567 -> "1.2M".
+ * Same shape as lib/format formatTokens but local so this file stays UI-only.
+ */
+function fmtTokensCompact(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+}
+
+/**
+ * Main draft-row text. When low equals high (no PDF, or zero attachments),
+ * shows a single number; when they differ (PDF range), shows "low to high"
+ * for both tokens and session %. Session % is rendered to one decimal so the
+ * range stays readable at small values.
+ */
+function formatDraftValue(draft: PreSubmitEstimate): string {
+    const low = draft.estimatedTokens;
+    const high = draft.estimatedTokensHigh;
+    const tokensText = low === high
+        ? `~${fmtTokensCompact(low)} tokens`
+        : `~${fmtTokensCompact(low)} to ${fmtTokensCompact(high)} tokens`;
+
+    if (draft.estimatedSessionPct === null) return tokensText;
+
+    const pctLow = draft.estimatedSessionPct;
+    const pctHigh = draft.estimatedSessionPctHigh ?? pctLow;
+    const pctText = Math.abs(pctHigh - pctLow) < 0.05
+        ? `~${pctLow.toFixed(1)}% of session`
+        : `~${pctLow.toFixed(1)}% to ${pctHigh.toFixed(1)}% of session`;
+
+    return `${tokensText}  ${pctText}`;
+}
+
+/**
+ * One-line breakdown for an attachment. Images render as "+Nk from image WxH";
+ * PDFs render as "+lowK to highK from PDF N pages". Unknown-cost images
+ * render with "?" instead of a token figure.
+ */
+function formatBreakdownLine(item: AttachmentBreakdownItem): string {
+    if (item.unknown) return `${item.label} (?)`;
+    if (item.tokensHigh !== undefined && item.tokensHigh !== item.tokens) {
+        return `+${fmtTokensCompact(item.tokens)} to ${fmtTokensCompact(item.tokensHigh)} from ${item.label}`;
+    }
+    return `+${fmtTokensCompact(item.tokens)} from ${item.label}`;
+}
+
+/**
+ * Context-window projection line. Shows what share of the model's window the
+ * upcoming turn would occupy on top of the conversation history. Renders as
+ * a range when low and high differ (PDF range), otherwise a single number.
+ * Suppressed when both bounds round to the same integer percent.
+ */
+function formatContextProjection(
+    low: number | null,
+    high: number | null,
+    windowSize: number,
+): string {
+    if (low === null || high === null) return '';
+    const ctxK = windowSize >= 1_000_000
+        ? `${(windowSize / 1_000_000).toFixed(0)}M`
+        : `${Math.round(windowSize / 1000)}k`;
+    const lowR = Math.round(low);
+    const highR = Math.round(high);
+    if (lowR === highR) return `~${lowR}% of ${ctxK} context`;
+    return `~${lowR}% to ${highR}% of ${ctxK} context`;
 }
 
 export function createOverlay(): OverlayHandle {
@@ -56,8 +126,12 @@ export function createOverlay(): OverlayHandle {
     let nudgeHideTimer: ReturnType<typeof setTimeout> | null = null;
     let elDraftRow: HTMLElement | null = null;
     let elDraftValue: HTMLElement | null = null;
+    let elDraftContext: HTMLElement | null = null;
+    let elDraftBreakdown: HTMLElement | null = null;
+    let elDraftDisclosure: HTMLElement | null = null;
     let elDraftCompare: HTMLElement | null = null;
     let elDraftWarning: HTMLElement | null = null;
+    let elDraftHardWarning: HTMLElement | null = null;
     let elWeeklyRow: HTMLElement | null = null;
     let elWeeklyFill: HTMLElement | null = null;
     let elWeeklyLabel: HTMLElement | null = null;
@@ -115,6 +189,32 @@ export function createOverlay(): OverlayHandle {
         draftRow.appendChild(valDraft);
         body.appendChild(draftRow);
 
+        // Context-window projection row: shows what fraction of the model's
+        // context window THIS turn would consume (history + draft + attachments).
+        // Hidden until the projection is non-trivial (>=1% of context).
+        const draftContext = document.createElement('div');
+        draftContext.className = 'lco-draft-context';
+        draftContext.style.display = 'none';
+        elDraftContext = draftContext;
+        body.appendChild(draftContext);
+
+        // Draft per-attachment breakdown (hidden when no attachments).
+        // One line per image or PDF, e.g. "+1.6k from image (1568x1568)".
+        const draftBreakdown = document.createElement('div');
+        draftBreakdown.className = 'lco-draft-breakdown';
+        draftBreakdown.style.display = 'none';
+        elDraftBreakdown = draftBreakdown;
+        body.appendChild(draftBreakdown);
+
+        // PDF disclosure (hidden unless a PDF is attached). Surfaces the
+        // unpublished per-page image overhead Anthropic does not quantify.
+        const draftDisclosure = document.createElement('div');
+        draftDisclosure.className = 'lco-draft-disclosure';
+        draftDisclosure.style.display = 'none';
+        draftDisclosure.textContent = 'PDFs with charts or images may cost more.';
+        elDraftDisclosure = draftDisclosure;
+        body.appendChild(draftDisclosure);
+
         // Draft model comparison (hidden unless cost > 5%)
         const draftCompare = document.createElement('div');
         draftCompare.className = 'lco-draft-compare';
@@ -128,6 +228,15 @@ export function createOverlay(): OverlayHandle {
         draftWarning.style.display = 'none';
         elDraftWarning = draftWarning;
         body.appendChild(draftWarning);
+
+        // Hard warnings from the attachment agent (e.g. PDF page cap exceeded).
+        // More urgent than the projection warning above; rendered in the rust
+        // accent so the user notices before send.
+        const draftHardWarning = document.createElement('div');
+        draftHardWarning.className = 'lco-draft-hard-warning';
+        draftHardWarning.style.display = 'none';
+        elDraftHardWarning = draftHardWarning;
+        body.appendChild(draftHardWarning);
 
         // Last request row
         const rowLast = document.createElement('div');
@@ -314,16 +423,25 @@ export function createOverlay(): OverlayHandle {
             const draft = state.draftEstimate;
             if (draft) {
                 elDraftRow.style.display = '';
-                if (draft.estimatedSessionPct !== null) {
-                    elDraftValue.textContent =
-                        `~${fmt(draft.estimatedTokens)} tokens  ~${draft.estimatedSessionPct.toFixed(1)}% of session`;
-                } else {
-                    elDraftValue.textContent = `~${fmt(draft.estimatedTokens)} tokens`;
-                }
+                elDraftValue.textContent = formatDraftValue(draft);
             } else {
                 elDraftRow.style.display = 'none';
                 elDraftValue.textContent = '';
             }
+        }
+        if (elDraftBreakdown) {
+            const items = state.draftEstimate?.attachmentBreakdown ?? [];
+            if (items.length === 0) {
+                elDraftBreakdown.style.display = 'none';
+                elDraftBreakdown.textContent = '';
+            } else {
+                elDraftBreakdown.style.display = '';
+                elDraftBreakdown.textContent = items.map(formatBreakdownLine).join('  ');
+            }
+        }
+        if (elDraftDisclosure) {
+            const showDisclosure = state.draftEstimate?.hasPdf ?? false;
+            elDraftDisclosure.style.display = showDisclosure ? '' : 'none';
         }
         if (elDraftCompare) {
             const comparisons = state.draftEstimate?.modelComparisons ?? [];
@@ -343,6 +461,34 @@ export function createOverlay(): OverlayHandle {
                 elDraftWarning.style.display = '';
             } else {
                 elDraftWarning.style.display = 'none';
+            }
+        }
+        if (elDraftHardWarning) {
+            // Fold the context-overrun warning into the same hard-warning row
+            // as PDF page-cap and request-size violations. All three are
+            // "this send may fail or truncate" issues; one prominent row keeps
+            // the user from missing any of them.
+            const draft = state.draftEstimate;
+            const hardParts: string[] = [];
+            if (draft?.contextOverrunWarning) hardParts.push(draft.contextOverrunWarning);
+            if (draft?.attachmentWarnings) hardParts.push(...draft.attachmentWarnings);
+            if (hardParts.length > 0) {
+                elDraftHardWarning.textContent = hardParts.join(' ');
+                elDraftHardWarning.style.display = '';
+            } else {
+                elDraftHardWarning.style.display = 'none';
+            }
+        }
+        if (elDraftContext) {
+            const draft = state.draftEstimate;
+            const low = draft?.projectedContextPctLow ?? null;
+            const high = draft?.projectedContextPctHigh ?? null;
+            // Show the row when there is anything meaningful to display
+            // (projection >= 1% so we do not flash for one-character drafts).
+            const visible = high !== null && high >= 1;
+            elDraftContext.style.display = visible ? '' : 'none';
+            if (visible) {
+                elDraftContext.textContent = formatContextProjection(low, high, draft!.contextWindowSize);
             }
         }
 

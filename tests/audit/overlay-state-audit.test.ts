@@ -155,22 +155,34 @@ describe('applyRestoredConversation', () => {
 // ── Draft estimate ─────────────────────────────────────────────────────────
 
 describe('draft estimate', () => {
+    const baseEstimate = {
+        estimatedTokens: 100,
+        estimatedTokensHigh: 100,
+        textTokens: 100,
+        estimatedSessionPct: 2.5,
+        estimatedSessionPctHigh: 2.5,
+        projectedTotalPct: 12.5,
+        modelComparisons: [],
+        warning: null,
+        attachmentBreakdown: [],
+        attachmentWarnings: [],
+        hasUnknownImage: false,
+        hasPdf: false,
+        projectedContextPctLow: 0.01,
+        projectedContextPctHigh: 0.01,
+        contextWindowSize: 1_000_000,
+        contextOverrunWarning: null,
+    };
+
     test('applyDraftEstimate sets estimate', () => {
-        const estimate = {
-            estimatedTokens: 100,
-            estimatedSessionPct: 2.5,
-            projectedTotalPct: 12.5,
-            modelComparisons: [],
-            warning: null,
-        };
-        const next = applyDraftEstimate(INITIAL_STATE, estimate);
-        expect(next.draftEstimate).toEqual(estimate);
+        const next = applyDraftEstimate(INITIAL_STATE, baseEstimate);
+        expect(next.draftEstimate).toEqual(baseEstimate);
     });
 
     test('applyDraftEstimate with null clears estimate', () => {
         const state: OverlayState = {
             ...INITIAL_STATE,
-            draftEstimate: { estimatedTokens: 100, estimatedSessionPct: null, projectedTotalPct: null, modelComparisons: [], warning: null },
+            draftEstimate: { ...baseEstimate, estimatedSessionPct: null, estimatedSessionPctHigh: null, projectedTotalPct: null },
         };
         const next = applyDraftEstimate(state, null);
         expect(next.draftEstimate).toBeNull();
@@ -179,7 +191,7 @@ describe('draft estimate', () => {
     test('clearDraftEstimate sets draftEstimate to null', () => {
         const state: OverlayState = {
             ...INITIAL_STATE,
-            draftEstimate: { estimatedTokens: 100, estimatedSessionPct: null, projectedTotalPct: null, modelComparisons: [], warning: null },
+            draftEstimate: { ...baseEstimate, estimatedSessionPct: null, estimatedSessionPctHigh: null, projectedTotalPct: null },
         };
         const next = clearDraftEstimate(state);
         expect(next.draftEstimate).toBeNull();

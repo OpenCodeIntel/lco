@@ -8,7 +8,10 @@ import { isValidBridgeSchema } from '../lib/bridge-validation';
 import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation, applyDraftEstimate, clearDraftEstimate, applyUsageBudget } from '../lib/overlay-state';
 import { computeUsageBudget, getTrackedUtilization } from '../lib/usage-budget';
 import { parseUsageResponse } from '../lib/usage-limits-parser';
-import { computePreSubmitEstimate } from '../lib/pre-submit';
+import { computePreSubmitEstimate, MIN_DRAFT_CHARS } from '../lib/pre-submit';
+import { computeAttachmentCost } from '../lib/attachment-cost';
+import type { AttachmentDescriptor } from '../lib/attachment-cost';
+import { countPdfPages } from '../lib/pdf-page-count';
 import { createOverlay } from '../ui/overlay';
 import { showEnableBanner } from '../ui/enable-banner';
 import { ClaudeAdapter } from '../lib/adapters/claude';
@@ -202,9 +205,24 @@ async function initializeMonitoring(): Promise<void> {
 
     // Compose box observer for pre-submit cost estimation.
     let composeBoxRef: HTMLElement | null = null;
+    let composeFormRef: HTMLElement | null = null;
     let composeObserver: MutationObserver | null = null;
     let attachmentObserver: MutationObserver | null = null;
     let draftDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let fileChangeListenerAttached = false;
+
+    /**
+     * Attachments currently visible in the compose form. Keyed by a stable
+     * file fingerprint; values carry the filename (used to detect when the
+     * user removes the attachment via the UI; we match the filename text
+     * against the rendered form contents and prune entries that disappear).
+     *
+     * Bytes never leave the browser: image dimensions come from naturalWidth
+     * on a blob-URL Image, PDF page counts from a local regex over the file's
+     * head and tail windows. The map only holds dimensions and page counts.
+     */
+    interface TrackedAttachment { filename: string; descriptor: AttachmentDescriptor; }
+    const attachmentMap = new Map<string, TrackedAttachment>();
 
     // Restore state from stored conversation record if one exists.
     // This gives the overlay correct context % and turn count immediately
@@ -362,6 +380,10 @@ async function initializeMonitoring(): Promise<void> {
 
         if (msg.type === 'TOKEN_BATCH') {
             // Clear draft estimate: the message has been sent, stream is starting.
+            // Also drop tracked attachments; claude.ai resets the compose form
+            // after send, and the next file the user picks will repopulate the
+            // map via the input change listener.
+            attachmentMap.clear();
             state = clearDraftEstimate(state);
             browser.runtime.sendMessage({
                 type: 'STORE_TOKEN_BATCH',
@@ -705,26 +727,110 @@ async function initializeMonitoring(): Promise<void> {
         }
     });
 
-    // Compose box observer: finds ProseMirror editor, reads text + attachment
-    // card content from the parent form/fieldset, debounces pre-submit estimates.
+    // Compose box observer: finds ProseMirror editor, reads text from the
+    // contenteditable only (the form parent's textContent includes attachment
+    // card filenames; reading text from the form would inflate the char count
+    // by the length of every attached filename), tracks attachments via the
+    // file input's change event, debounces pre-submit estimates.
 
-    function findFormParent(el: HTMLElement): HTMLElement | null {
+    /**
+     * Find the compose region: the smallest reasonable ancestor of the editor
+     * that wraps the attachment cards and the file input. claude.ai's modern
+     * React build does not always use a <form> element, so we accept three
+     * shapes: an actual FORM/FIELDSET (legacy), any ancestor whose subtree
+     * contains an <input type=file> (current), or a wide-but-bounded ancestor
+     * walk if neither matches. Returns null when no plausible parent exists,
+     * which only happens when the editor is detached from the DOM.
+     */
+    function findComposeRegion(el: HTMLElement): HTMLElement | null {
         let p: HTMLElement | null = el.parentElement;
-        for (let i = 0; i < 5 && p; i++) {
+        let widestSeen: HTMLElement | null = null;
+        for (let i = 0; i < 8 && p; i++) {
             const t = p.tagName;
             if (t === 'FIELDSET' || t === 'FORM') return p;
+            if (p.querySelector('input[type=file]')) return p;
+            widestSeen = p;
             p = p.parentElement;
         }
-        return null;
+        return widestSeen;
     }
 
-    function onComposeInput(): void {
-        if (!composeBoxRef) return;
-        const container = findFormParent(composeBoxRef);
-        const text = (container ?? composeBoxRef).textContent ?? '';
+    function fileKey(file: File): string {
+        return `${file.name}|${file.size}|${file.lastModified}`;
+    }
 
-        if (text.length < 20) {
-            if (draftDebounceTimer) { clearTimeout(draftDebounceTimer); draftDebounceTimer = null; }
+    /**
+     * Read an image's pixel dimensions via a transient blob URL. The bytes
+     * never leave the browser: the URL is local-only and revoked as soon as
+     * the load handler fires.
+     */
+    function readImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
+        return new Promise(resolve => {
+            const url = URL.createObjectURL(file);
+            const img = new Image();
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                resolve({ width: img.naturalWidth, height: img.naturalHeight });
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                resolve(null);
+            };
+            img.src = url;
+        });
+    }
+
+    /**
+     * Read enough of a PDF to locate its page-tree root: the first 1 MB plus
+     * the last 64 KB. This covers the common cases (catalog near the head,
+     * trailer at the tail) without slurping a 32 MB file into memory. Bytes
+     * stay local; nothing crosses the bridge.
+     */
+    async function readPdfPageCount(file: File): Promise<number | null> {
+        const HEAD = 1024 * 1024;
+        const TAIL = 64 * 1024;
+
+        try {
+            if (file.size <= HEAD + TAIL) {
+                return countPdfPages(new Uint8Array(await file.arrayBuffer()));
+            }
+            const headBuf = await file.slice(0, HEAD).arrayBuffer();
+            const tailBuf = await file.slice(file.size - TAIL).arrayBuffer();
+            const merged = new Uint8Array(HEAD + TAIL);
+            merged.set(new Uint8Array(headBuf), 0);
+            merged.set(new Uint8Array(tailBuf), HEAD);
+            return countPdfPages(merged);
+        } catch {
+            return null;
+        }
+    }
+
+    function recomputeDraft(): void {
+        if (!composeBoxRef) return;
+
+        // Read text only from the contenteditable. Reading from the form
+        // parent would include attachment-card filenames in the char count.
+        const text = composeBoxRef.textContent ?? '';
+
+        // Reconcile the attachment map against what is currently rendered:
+        // when the user removes an attachment via the UI, claude.ai removes
+        // its card from the DOM; the filename disappears from the form's
+        // textContent. Drop tracked entries whose filename is no longer there.
+        if (composeFormRef) {
+            const formText = composeFormRef.textContent ?? '';
+            for (const [key, tracked] of attachmentMap) {
+                if (!formText.includes(tracked.filename)) {
+                    attachmentMap.delete(key);
+                }
+            }
+        }
+
+        const model = convState.model || 'claude-sonnet-4-6';
+        const attachments: AttachmentDescriptor[] = [];
+        for (const tracked of attachmentMap.values()) attachments.push(tracked.descriptor);
+        const cost = computeAttachmentCost(attachments, model);
+
+        if (text.length < MIN_DRAFT_CHARS && attachmentMap.size === 0) {
             if (state.draftEstimate !== null) {
                 state = clearDraftEstimate(state);
                 overlay.render(state);
@@ -732,16 +838,71 @@ async function initializeMonitoring(): Promise<void> {
             return;
         }
 
+        state = applyDraftEstimate(state, computePreSubmitEstimate({
+            draftCharCount: text.length,
+            model,
+            pctPerInputToken: cachedPctPerInputToken,
+            currentSessionPct: lastKnownUtilization ?? 0,
+            currentContextPct: state.contextPct ?? 0,
+            attachmentTokensLow: cost.totalTokensLow,
+            attachmentTokensHigh: cost.totalTokensHigh,
+            attachmentBreakdown: cost.breakdown,
+            attachmentWarnings: cost.warnings,
+            hasUnknownImage: cost.hasUnknownImage,
+            hasPdf: cost.hasPdf,
+        }));
+        overlay.render(state);
+    }
+
+    function onComposeInput(): void {
         if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
-        draftDebounceTimer = setTimeout(() => {
-            state = applyDraftEstimate(state, computePreSubmitEstimate({
-                draftCharCount: text.length,
-                model: convState.model || 'claude-sonnet-4-6',
-                pctPerInputToken: cachedPctPerInputToken,
-                currentSessionPct: lastKnownUtilization ?? 0,
-            }));
-            overlay.render(state);
-        }, 500);
+        draftDebounceTimer = setTimeout(() => { recomputeDraft(); }, 500);
+    }
+
+    function handleFileChange(event: Event): void {
+        const input = event.target as HTMLInputElement | null;
+        if (!input || input.tagName !== 'INPUT' || input.type !== 'file' || !input.files) return;
+
+        // Snapshot files now: input.files can mutate before async reads resolve.
+        const files = Array.from(input.files);
+        for (const file of files) {
+            const key = fileKey(file);
+            if (attachmentMap.has(key)) continue;
+
+            if (file.type.startsWith('image/')) {
+                readImageDimensions(file).then(dims => {
+                    if (!dims || dims.width <= 0 || dims.height <= 0) return;
+                    attachmentMap.set(key, {
+                        filename: file.name,
+                        descriptor: {
+                            kind: 'image',
+                            width: dims.width,
+                            height: dims.height,
+                            sourceLabel: file.name,
+                            fileSize: file.size,
+                        },
+                    });
+                    recomputeDraft();
+                });
+            } else if (file.type === 'application/pdf') {
+                readPdfPageCount(file).then(pages => {
+                    // pages can be null when the PDF is encrypted, fully
+                    // compressed, or malformed. Track it anyway so the user
+                    // sees the file is registered; the agent renders an
+                    // unknown-cost row rather than dropping the attachment.
+                    attachmentMap.set(key, {
+                        filename: file.name,
+                        descriptor: {
+                            kind: 'pdf',
+                            pageCount: pages !== null && pages > 0 ? pages : null,
+                            sourceLabel: file.name,
+                            fileSize: file.size,
+                        },
+                    });
+                    recomputeDraft();
+                });
+            }
+        }
     }
 
     function discoverComposeBox(): void {
@@ -750,8 +911,11 @@ async function initializeMonitoring(): Promise<void> {
         if (box) {
             composeBoxRef = box;
             box.addEventListener('input', onComposeInput);
-            const parent = findFormParent(box);
+            const parent = findComposeRegion(box);
             if (parent) {
+                composeFormRef = parent;
+                // Attachment-card adds and removes flow through DOM mutations.
+                // Reuse onComposeInput so the same debounce path covers both.
                 attachmentObserver = new MutationObserver(onComposeInput);
                 attachmentObserver.observe(parent, { childList: true, subtree: true });
             }
@@ -766,6 +930,18 @@ async function initializeMonitoring(): Promise<void> {
     }
 
     discoverComposeBox();
+
+    // Document-level capture for file-input change events. claude.ai's compose
+    // form is a deeply-nested set of divs (no <form> tag) and the file input
+    // can live outside the editor's immediate ancestor chain, so per-region
+    // attachment was missing the event entirely. Capture-phase at document
+    // level catches every change before it bubbles, regardless of where the
+    // input sits relative to the editor. The listener is attached once and
+    // never removed; it is harmless when no compose box has been discovered.
+    if (!fileChangeListenerAttached) {
+        document.documentElement.addEventListener('change', handleFileChange, true);
+        fileChangeListenerAttached = true;
+    }
 
     // Reset overlay, conversation state, and dismissed nudges on SPA navigation (Chrome 102+).
     // Also finalize the previous conversation and detect the new one.
@@ -808,9 +984,14 @@ async function initializeMonitoring(): Promise<void> {
             overlay.hideNudge();
 
             // Re-discover the compose box: SPA navigation replaces the DOM.
+            // The document-level file-change listener stays attached across
+            // navigations (document.documentElement is stable), so we do not
+            // reset fileChangeListenerAttached here.
             if (composeObserver) { composeObserver.disconnect(); composeObserver = null; }
             if (attachmentObserver) { attachmentObserver.disconnect(); attachmentObserver = null; }
             composeBoxRef = null;
+            composeFormRef = null;
+            attachmentMap.clear();
             if (draftDebounceTimer) { clearTimeout(draftDebounceTimer); draftDebounceTimer = null; }
             discoverComposeBox();
 
