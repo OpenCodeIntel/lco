@@ -7,9 +7,10 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createOverlay } from '../../ui/overlay';
-import { INITIAL_STATE, applyUsageBudget } from '../../lib/overlay-state';
+import { INITIAL_STATE, applyUsageBudget, applyWeeklyEta } from '../../lib/overlay-state';
 import { computeUsageBudget, classifyZone } from '../../lib/usage-budget';
 import type { UsageLimitsData, UsageBudgetSession, UsageBudgetCredit, BudgetZone } from '../../lib/message-types';
+import type { WeeklyEta } from '../../lib/weekly-cap-eta';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -228,5 +229,80 @@ describe('overlay/side-panel weeklyPct invariant', () => {
         // The side panel UsageBudgetCard uses classifyZone(weeklyPct) for the weekly fill.
         // Both reference the same exported function with the same input.
         expect(classifyZone(budget.weeklyPct)).toBe('moderate');
+    });
+});
+
+// ── Weekly ETA label in overlay (GET-21) ─────────────────────────────────────
+
+function getEtaEl(shadow: ShadowRoot): HTMLElement | null {
+    return shadow.querySelector('.lco-weekly-eta');
+}
+
+function makeEta(etaTimestamp: number, confidence: WeeklyEta['confidence'] = 'high'): WeeklyEta {
+    return { etaTimestamp, hoursRemaining: 6, confidence };
+}
+
+describe('overlay ETA label', () => {
+    it('ETA element is present in the DOM after mount', () => {
+        const { shadow } = mountOverlay();
+        expect(getEtaEl(shadow)).not.toBeNull();
+    });
+
+    it('is hidden when weeklyEta is null', () => {
+        const { shadow } = mountOverlay();
+        expect(getEtaEl(shadow)!.style.display).toBe('none');
+    });
+
+    it('is visible when budget is session AND weeklyEta is non-null', () => {
+        const { overlay, shadow } = mountOverlay();
+        const state = applyWeeklyEta(
+            applyUsageBudget(INITIAL_STATE, makeBudget(50)),
+            makeEta(NOW + 6 * 60 * 60 * 1000),
+        );
+        overlay.render(state);
+        expect(getEtaEl(shadow)!.style.display).not.toBe('none');
+    });
+
+    it('shows a non-empty label containing "at this pace"', () => {
+        const { overlay, shadow } = mountOverlay();
+        const state = applyWeeklyEta(
+            applyUsageBudget(INITIAL_STATE, makeBudget(50)),
+            makeEta(NOW + 6 * 60 * 60 * 1000),
+        );
+        overlay.render(state);
+        expect(getEtaEl(shadow)!.textContent).toMatch(/at this pace/i);
+    });
+
+    it('hides when weeklyEta is cleared back to null', () => {
+        const { overlay, shadow } = mountOverlay();
+        overlay.render(applyWeeklyEta(
+            applyUsageBudget(INITIAL_STATE, makeBudget(50)),
+            makeEta(NOW + 6 * 60 * 60 * 1000),
+        ));
+        overlay.render(applyWeeklyEta(
+            applyUsageBudget(INITIAL_STATE, makeBudget(50)),
+            null,
+        ));
+        expect(getEtaEl(shadow)!.style.display).toBe('none');
+    });
+
+    it('hides when budget is credit even if weeklyEta is non-null', () => {
+        const { overlay, shadow } = mountOverlay();
+        const credit: UsageBudgetCredit = {
+            kind: 'credit',
+            monthlyLimitCents: 50000,
+            usedCents: 30491,
+            utilizationPct: 60.982,
+            currency: 'USD',
+            resetLabel: 'Resets May 1',
+            zone: 'moderate',
+            statusLabel: '$304.91 of $500.00 spent',
+        };
+        const state = applyWeeklyEta(
+            applyUsageBudget(INITIAL_STATE, credit),
+            makeEta(NOW + 6 * 60 * 60 * 1000),
+        );
+        overlay.render(state);
+        expect(getEtaEl(shadow)!.style.display).toBe('none');
     });
 });

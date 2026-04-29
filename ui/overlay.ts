@@ -10,6 +10,7 @@ import type { ContextSignal } from '../lib/context-intelligence';
 import { classifyZone } from '../lib/usage-budget';
 import type { PreSubmitEstimate } from '../lib/pre-submit';
 import type { AttachmentBreakdownItem } from '../lib/attachment-cost';
+import { formatEtaLabel } from '../lib/weekly-cap-eta';
 
 export interface OverlayHandle {
     mount(shadow: ShadowRoot): void;
@@ -135,6 +136,7 @@ export function createOverlay(): OverlayHandle {
     let elWeeklyRow: HTMLElement | null = null;
     let elWeeklyFill: HTMLElement | null = null;
     let elWeeklyLabel: HTMLElement | null = null;
+    let elWeeklyEta: HTMLElement | null = null;
 
     function mount(shadow: ShadowRoot): void {
         const style = document.createElement('style');
@@ -344,6 +346,14 @@ export function createOverlay(): OverlayHandle {
         weeklyRow.appendChild(weeklyTrack);
         weeklyRow.appendChild(weeklyLabel);
         body.appendChild(weeklyRow);
+
+        // ETA label: shown below the weekly bar when a projection is available.
+        // Hidden by default; revealed by render() when weeklyEta is non-null.
+        const weeklyEta = document.createElement('div');
+        weeklyEta.className = 'lco-weekly-eta';
+        weeklyEta.style.display = 'none';
+        elWeeklyEta = weeklyEta;
+        body.appendChild(weeklyEta);
 
         // Divider: hidden until first request completes
         const divider = document.createElement('div');
@@ -578,6 +588,18 @@ export function createOverlay(): OverlayHandle {
                 elWeeklyFill.style.transform = `scaleX(${pct / 100})`;
                 elWeeklyFill.className = `lco-bar-fill lco-bar-fill--${classifyZone(pct)}`;
                 elWeeklyLabel.textContent = `${Math.round(pct)}% weekly`;
+            }
+        }
+
+        if (elWeeklyEta) {
+            const eta = state.weeklyEta;
+            // ETA is only shown on session-tier budget: guard against credit/null budget.
+            const budgetIsSession = state.usageBudget?.kind === 'session';
+            if (eta !== null && budgetIsSession) {
+                elWeeklyEta.textContent = `~${formatEtaLabel(eta.etaTimestamp)} at this pace`;
+                elWeeklyEta.style.display = '';
+            } else {
+                elWeeklyEta.style.display = 'none';
             }
         }
 

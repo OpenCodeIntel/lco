@@ -17,6 +17,9 @@ import {
     storeUsageLimits,
     appendUsageDelta,
     getUsageDeltas,
+    appendUsageBudgetSnapshot,
+    getUsageBudgetSnapshots,
+    clearUsageBudgetSnapshots,
     todayDateString,
     isoWeekId,
     RETENTION_DAYS,
@@ -417,7 +420,38 @@ export default defineBackground({
           limits = { kind: 'unsupported', capturedAt };
         }
         storeUsageLimits(message.organizationId, limits)
-          .then(() => sendResponse({ ok: true }))
+          .then(async () => {
+            // Append a snapshot for the weekly-cap ETA agent (session tier only).
+            // Skip credit and unsupported: they do not have a weekly rolling window.
+            if (message.kind === 'session') {
+              try {
+                const orgId = message.organizationId;
+                const weeklyPct = message.sevenDayUtilization;
+                const sessionPct = message.fiveHourUtilization;
+
+                // Reset detection: a significant drop in weeklyPct signals a
+                // weekly-cap reset. Stale pre-reset snapshots would skew the ETA
+                // toward zero; clear them so the projection rebuilds from scratch.
+                const existing = await getUsageBudgetSnapshots(orgId);
+                if (existing.length > 0) {
+                  const lastPct = existing[existing.length - 1].weeklyPct;
+                  if (weeklyPct < lastPct - 5) {
+                    await clearUsageBudgetSnapshots(orgId);
+                  }
+                }
+
+                await appendUsageBudgetSnapshot(orgId, {
+                  timestamp: capturedAt,
+                  weeklyPct,
+                  sessionPct,
+                });
+              } catch (err) {
+                // Non-critical: ETA simply stays null until next successful append.
+                console.error('[LCO-ERROR] Failed to append usage budget snapshot:', err);
+              }
+            }
+            sendResponse({ ok: true });
+          })
           .catch((err) => {
             console.error('[LCO-ERROR] Failed to store usage limits:', err);
             sendResponse({ ok: false });

@@ -8,6 +8,7 @@ import type { TabState, UsageBudgetSession, UsageBudgetCredit } from './message-
 import type { HealthScore } from './health-score';
 import type { ConversationRecord } from './conversation-store';
 import type { PreSubmitEstimate } from './pre-submit';
+import type { WeeklyEta } from './weekly-cap-eta';
 
 /**
  * Renderable budget variants only. The unsupported variant has nothing for
@@ -56,6 +57,13 @@ export interface OverlayState {
      * out at the call site (the overlay has no empty-state UI for it).
      */
     usageBudget: RenderableBudget | null;
+    /**
+     * Projected time-to-100% for the weekly usage cap.
+     * Null until enough snapshots have accumulated (MIN_SNAPSHOTS_FOR_ETA),
+     * when usage is flat or declining, or immediately after a weekly reset.
+     * Session tier only: credit (Enterprise) has no weekly rolling window.
+     */
+    weeklyEta: WeeklyEta | null;
 }
 
 export const INITIAL_STATE: Readonly<OverlayState> = {
@@ -69,6 +77,7 @@ export const INITIAL_STATE: Readonly<OverlayState> = {
     lastDeltaUtilization: null,
     draftEstimate: null,
     usageBudget: null,
+    weeklyEta: null,
 };
 
 
@@ -193,4 +202,13 @@ export function clearDraftEstimate(state: OverlayState): OverlayState {
  */
 export function applyUsageBudget(state: OverlayState, budget: RenderableBudget): OverlayState {
     return { ...state, usageBudget: budget };
+}
+
+/**
+ * Apply or clear the weekly-cap ETA projection.
+ * Called alongside applyUsageBudget after each usage fetch.
+ * Null clears the ETA row (flat/declining usage, not enough history, post-reset).
+ */
+export function applyWeeklyEta(state: OverlayState, eta: WeeklyEta | null): OverlayState {
+    return { ...state, weeklyEta: eta };
 }

@@ -5,6 +5,7 @@
 
 import { calculateCost } from './pricing';
 import type { UsageLimitsData } from './message-types';
+import type { UsageBudgetSnapshot } from './weekly-cap-eta';
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
@@ -131,6 +132,10 @@ export const CRITICAL_CONTEXT_PCT = 80;
 // Append-only delta log cap. Oldest records are pruned when this is exceeded.
 // At ~50 bytes per record, 500 entries is ~25 KB, well within storage.local limits.
 export const MAX_USAGE_DELTAS = 500;
+// Rolling snapshot cap for the weekly-cap ETA agent.
+// ~200 records × ~50 bytes ≈ 10 KB, well within storage.local limits.
+// 200 hourly snapshots covers ~8 days — more than one full weekly cycle.
+export const MAX_USAGE_BUDGET_SNAPSHOTS = 200;
 
 // Storage key builders. All keys are scoped to an accountId (organization UUID)
 // so multiple Claude accounts sharing one browser get isolated data.
@@ -148,6 +153,10 @@ function weeklyIndexKey(accountId: string): string { assertAccountId(accountId);
 function usageLimitsKey(accountId: string): string { assertAccountId(accountId); return `usageLimits:${accountId}`; }
 // Append-only delta log, capped at MAX_USAGE_DELTAS. Key referenced in claude-ai.content.ts.
 function usageDeltasKey(accountId: string): string { assertAccountId(accountId); return `usageDeltas:${accountId}`; }
+// Rolling snapshot list for the weekly-cap ETA agent, capped at MAX_USAGE_BUDGET_SNAPSHOTS.
+// Reset by clearUsageBudgetSnapshots on weekly-cap reset detection in background.ts.
+// Exported so content scripts can read the key directly without going through setStorage.
+export function usageBudgetSnapshotsKey(accountId: string): string { assertAccountId(accountId); return `usageBudgetSnapshots:${accountId}`; }
 
 // Legacy (pre-account-isolation) key builders for read-through migration.
 function legacyConvKey(convId: string): string { return `conv:${convId}`; }
@@ -804,4 +813,60 @@ export async function getUsageDeltas(accountId: string): Promise<UsageDelta[]> {
     const data = await store().get(key);
     const records = data[key];
     return Array.isArray(records) ? records as UsageDelta[] : [];
+}
+
+// ── Usage Budget Snapshots ────────────────────────────────────────────────────
+// Rolling list of (timestamp, weeklyPct, sessionPct) tuples for the weekly-cap
+// ETA agent. One entry per STORE_USAGE_LIMITS (session variant) call. Capped at
+// MAX_USAGE_BUDGET_SNAPSHOTS. Cleared on weekly-cap reset detection.
+
+/**
+ * Append one snapshot to the per-account rolling snapshot list.
+ * Prunes the oldest entries when the list exceeds MAX_USAGE_BUDGET_SNAPSHOTS.
+ *
+ * @param accountId - Organization UUID
+ * @param snapshot  - Snapshot tuple to append
+ */
+export async function appendUsageBudgetSnapshot(
+    accountId: string,
+    snapshot: UsageBudgetSnapshot,
+): Promise<void> {
+    const key = usageBudgetSnapshotsKey(accountId);
+    const data = await store().get(key);
+    const existing = data[key];
+    const records: UsageBudgetSnapshot[] = Array.isArray(existing) ? existing as UsageBudgetSnapshot[] : [];
+
+    records.push(snapshot);
+
+    const overflow = records.length - MAX_USAGE_BUDGET_SNAPSHOTS;
+    if (overflow > 0) {
+        records.splice(0, overflow);
+    }
+
+    await store().set({ [key]: records });
+}
+
+/**
+ * Read all budget snapshots for an account, oldest first.
+ * Returns an empty array when no snapshots exist yet.
+ *
+ * @param accountId - Organization UUID
+ */
+export async function getUsageBudgetSnapshots(accountId: string): Promise<UsageBudgetSnapshot[]> {
+    const key = usageBudgetSnapshotsKey(accountId);
+    const data = await store().get(key);
+    const records = data[key];
+    return Array.isArray(records) ? records as UsageBudgetSnapshot[] : [];
+}
+
+/**
+ * Clear all budget snapshots for an account.
+ * Called by the background script on weekly-cap reset detection so no
+ * stale pre-reset snapshots pollute the ETA projection.
+ *
+ * @param accountId - Organization UUID
+ */
+export async function clearUsageBudgetSnapshots(accountId: string): Promise<void> {
+    const key = usageBudgetSnapshotsKey(accountId);
+    await store().set({ [key]: [] });
 }

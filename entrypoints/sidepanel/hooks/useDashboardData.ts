@@ -22,6 +22,7 @@ import {
     listConversations,
     getUsageLimits,
     getUsageDeltas,
+    getUsageBudgetSnapshots,
     todayDateString,
     type DailySummary,
     type ConversationRecord,
@@ -29,6 +30,7 @@ import {
 import { computeHealthScore, computeGrowthRate, type HealthScore } from '../../../lib/health-score';
 import { computeUsageBudget } from '../../../lib/usage-budget';
 import { computeTokenEconomics, type TokenEconomicsResult } from '../../../lib/token-economics';
+import { computeWeeklyEta, type WeeklyEta } from '../../../lib/weekly-cap-eta';
 import type { UsageBudgetResult } from '../../../lib/message-types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -102,6 +104,13 @@ export interface DashboardData {
      * Maps model name to median tokens per 1% of session consumed.
      */
     tokenEconomics: TokenEconomicsResult | null;
+    /**
+     * Projected time-to-100% for the weekly usage cap.
+     * Null until MIN_SNAPSHOTS_FOR_ETA snapshots exist, or when usage is flat
+     * or declining, or immediately after a weekly reset (snapshots cleared).
+     * Session tier only (Pro/Max). Always null on Enterprise and unsupported tiers.
+     */
+    weeklyEta: WeeklyEta | null;
     loading: boolean;
 }
 
@@ -115,6 +124,7 @@ export function useDashboardData(): DashboardData {
     const [budget, setBudget] = useState<UsageBudgetResult | null>(null);
     const [isClaudeTab, setIsClaudeTab] = useState(false);
     const [tokenEconomics, setTokenEconomics] = useState<TokenEconomicsResult | null>(null);
+    const [weeklyEta, setWeeklyEta] = useState<WeeklyEta | null>(null);
     const [loading, setLoading] = useState(true);
 
     // Track current tab ID so we know which activeConv_ key to watch.
@@ -124,6 +134,12 @@ export function useDashboardData(): DashboardData {
     // Ref mirror of isClaudeTab so event listeners (closures) can read the current
     // value without capturing a stale boolean from the render cycle.
     const isClaudeTabRef = useRef(false);
+    // Monotonic counter incremented at the start of every loadWeeklyEta call and
+    // whenever weeklyEta is explicitly cleared. An in-flight resolution checks that
+    // its captured ID still matches before calling setWeeklyEta, preventing a stale
+    // response from overwriting a later explicit clear (e.g., same org, two rapid
+    // tab switches where orgId ends up equal but requests are from different cycles).
+    const weeklyEtaRequestIdRef = useRef(0);
 
     // Sync helper: always update both the React state and the ref together so
     // they never drift. All code that changes isClaudeTab must use this.
@@ -179,6 +195,41 @@ export function useDashboardData(): DashboardData {
         }
     }, []);
 
+    const loadBudget = useCallback(async () => {
+        try {
+            const orgId = orgIdRef.current;
+            if (!orgId) return;
+            const limits = await getUsageLimits(orgId);
+            // Stale-check: the org may have changed while getUsageLimits was in flight
+            // (account switch, logout, tab change). Applying stale data from the old org
+            // would overwrite the correct cleared or newly-loaded state. Discard it.
+            if (orgIdRef.current !== orgId) return;
+            if (!limits) {
+                setBudget(null);
+                return;
+            }
+            setBudget(computeUsageBudget(limits, Date.now()));
+        } catch {
+            // Dashboard shows nothing rather than crash.
+        }
+    }, []);
+
+    const loadWeeklyEta = useCallback(async () => {
+        const requestId = ++weeklyEtaRequestIdRef.current;
+        try {
+            const orgId = orgIdRef.current;
+            if (!orgId) {
+                setWeeklyEta(null);
+                return;
+            }
+            const snapshots = await getUsageBudgetSnapshots(orgId);
+            if (orgIdRef.current !== orgId || weeklyEtaRequestIdRef.current !== requestId) return;
+            setWeeklyEta(computeWeeklyEta(snapshots, Date.now()));
+        } catch {
+            // Non-critical: ETA panel simply stays hidden.
+        }
+    }, []);
+
     const loadActiveConversation = useCallback(async (tabId: number) => {
         try {
             // Read the active conversation and org ID for this tab from session storage.
@@ -206,6 +257,8 @@ export function useDashboardData(): DashboardData {
                     setToday(null);
                     setConversations([]);
                     setBudget(null);
+                    weeklyEtaRequestIdRef.current++;
+                    setWeeklyEta(null);
                     setTokenEconomics(null);
                 }
                 return;
@@ -235,32 +288,15 @@ export function useDashboardData(): DashboardData {
             if (orgChanged) {
                 loadConversations();
                 loadToday();
+                loadBudget();
+                loadWeeklyEta();
                 loadTokenEconomics();
             }
         } catch {
             setActiveConv(null);
             setActiveHealth(null);
         }
-    }, [loadConversations, loadToday, loadTokenEconomics]);
-
-    const loadBudget = useCallback(async () => {
-        try {
-            const orgId = orgIdRef.current;
-            if (!orgId) return;
-            const limits = await getUsageLimits(orgId);
-            // Stale-check: the org may have changed while getUsageLimits was in flight
-            // (account switch, logout, tab change). Applying stale data from the old org
-            // would overwrite the correct cleared or newly-loaded state. Discard it.
-            if (orgIdRef.current !== orgId) return;
-            if (!limits) {
-                setBudget(null);
-                return;
-            }
-            setBudget(computeUsageBudget(limits, Date.now()));
-        } catch {
-            // Dashboard shows nothing rather than crash.
-        }
-    }, []);
+    }, [loadConversations, loadToday, loadBudget, loadWeeklyEta, loadTokenEconomics]);
 
     // ── Initial load ──────────────────────────────────────────────────────────
 
@@ -289,6 +325,7 @@ export function useDashboardData(): DashboardData {
             await loadToday();
             if (onClaude) {
                 await loadBudget();
+                loadWeeklyEta();
             }
             // Token economics is non-blocking: fire after the main data loads.
             // It requires enough delta records to be meaningful (MIN_SAMPLES per model),
@@ -298,7 +335,7 @@ export function useDashboardData(): DashboardData {
         }
 
         init();
-    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadTokenEconomics]);
+    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadWeeklyEta, loadTokenEconomics]);
 
     // ── Live subscriptions ────────────────────────────────────────────────────
 
@@ -343,6 +380,10 @@ export function useDashboardData(): DashboardData {
                 if (hasBudgetChange && isClaudeTabRef.current) {
                     loadBudget();
                 }
+                const hasSnapshotChange = keys.some(k => k.startsWith('usageBudgetSnapshots:'));
+                if (hasSnapshotChange && isClaudeTabRef.current) {
+                    loadWeeklyEta();
+                }
                 if (hasDeltaChange) {
                     loadTokenEconomics();
                 }
@@ -378,10 +419,12 @@ export function useDashboardData(): DashboardData {
 
             if (onClaude) {
                 loadBudget();
+                loadWeeklyEta();
             } else {
                 // Explicitly clear budget -- do not show stale data from the previous
                 // Claude tab while the user is on Gmail, GitHub, etc.
                 setBudget(null);
+                setWeeklyEta(null);
             }
         }
 
@@ -405,9 +448,11 @@ export function useDashboardData(): DashboardData {
             if (onClaude) {
                 // Navigated back to claude.ai: reload live data.
                 loadBudget();
+                loadWeeklyEta();
             } else {
                 // Navigated away: clear live data immediately.
                 setBudget(null);
+                setWeeklyEta(null);
             }
         }
 
@@ -420,6 +465,7 @@ export function useDashboardData(): DashboardData {
             // is no active tab to track. The user will need to click another tab.
             applyIsClaudeTab(false);
             setBudget(null);
+            setWeeklyEta(null);
         }
 
         chrome.storage.onChanged.addListener(onStorageChanged);
@@ -433,7 +479,7 @@ export function useDashboardData(): DashboardData {
             chrome.tabs.onUpdated.removeListener(onTabUpdated);
             chrome.tabs.onRemoved.removeListener(onTabRemoved);
         };
-    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadTokenEconomics]);
+    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadWeeklyEta, loadTokenEconomics]);
 
-    return { today, activeConv, activeHealth, conversations, budget, isClaudeTab, tokenEconomics, loading };
+    return { today, activeConv, activeHealth, conversations, budget, isClaudeTab, tokenEconomics, weeklyEta, loading };
 }

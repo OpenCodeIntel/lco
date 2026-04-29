@@ -5,7 +5,7 @@
 import type { LcoBridgeMessage, StoreTokenBatchMessage, StoreMessageLimitMessage, StoreTokenBatchResponse, RecordTurnMessage, FinalizeConversationMessage, SetActiveConvMessage, StoreUsageLimitsMessage, UsageBudgetResult } from '../lib/message-types';
 import { LCO_NAMESPACE } from '../lib/message-types';
 import { isValidBridgeSchema } from '../lib/bridge-validation';
-import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation, applyDraftEstimate, clearDraftEstimate, applyUsageBudget } from '../lib/overlay-state';
+import { INITIAL_STATE, applyTokenBatch, applyStreamComplete, applyStorageResponse, applyHealthBroken, applyHealthRecovered, applyMessageLimit, applyRestoredConversation, applyDraftEstimate, clearDraftEstimate, applyUsageBudget, applyWeeklyEta } from '../lib/overlay-state';
 import { computeUsageBudget, getTrackedUtilization } from '../lib/usage-budget';
 import { parseUsageResponse } from '../lib/usage-limits-parser';
 import { computePreSubmitEstimate, MIN_DRAFT_CHARS } from '../lib/pre-submit';
@@ -22,10 +22,12 @@ import type { PromptCharacteristics, DeltaPromptContext } from '../lib/prompt-an
 import { analyzeDelta } from '../lib/delta-coaching';
 import type { DeltaCoachInput } from '../lib/delta-coaching';
 import { getContextWindowSize, calculateCost } from '../lib/pricing';
-import { extractConversationId } from '../lib/conversation-store';
+import { extractConversationId, usageBudgetSnapshotsKey } from '../lib/conversation-store';
 import type { ConversationRecord } from '../lib/conversation-store';
 import { computeHealthScore, computeGrowthRate } from '../lib/health-score';
 import { buildHandoffSummary } from '../lib/handoff-summary';
+import { computeWeeklyEta } from '../lib/weekly-cap-eta';
+import type { UsageBudgetSnapshot } from '../lib/weekly-cap-eta';
 
 export default defineContentScript({
     matches: ['https://claude.ai/*'],
@@ -123,6 +125,24 @@ async function fetchAndStoreUsageLimits(orgId: string): Promise<UsageBudgetResul
         return computeUsageBudget(limits, limits.kind === 'unsupported' ? Date.now() : limits.capturedAt);
     } catch {
         // Network errors are silently ignored; the dashboard shows stale data.
+        return null;
+    }
+}
+
+/**
+ * Read the rolling snapshot list for an org and compute the weekly-cap ETA.
+ * Uses chrome.storage.local directly (no conversation-store setStorage dependency
+ * in the content-script context). Returns null on any read error or when the
+ * ETA agent suppresses the result (too few samples, flat/declining usage, etc).
+ */
+async function computeEtaForOrg(orgId: string): Promise<import('../lib/weekly-cap-eta').WeeklyEta | null> {
+    try {
+        const key = usageBudgetSnapshotsKey(orgId);
+        const data = await browser.storage.local.get(key);
+        const raw = data[key];
+        const snapshots: UsageBudgetSnapshot[] = Array.isArray(raw) ? raw as UsageBudgetSnapshot[] : [];
+        return computeWeeklyEta(snapshots, Date.now());
+    } catch {
         return null;
     }
 }
@@ -343,10 +363,16 @@ async function initializeMonitoring(): Promise<void> {
                 // monthly% on Enterprise) as the initial before-snapshot so the
                 // first STREAM_COMPLETE can compute a delta in matching units.
                 // The unsupported variant has nothing to track or display.
-                fetchAndStoreUsageLimits(currentOrgId).then(budget => {
+                const orgIdForEta = currentOrgId;
+                fetchAndStoreUsageLimits(currentOrgId).then(async budget => {
                     if (budget !== null && budget.kind !== 'unsupported') {
                         lastKnownUtilization = getTrackedUtilization(budget);
                         state = applyUsageBudget(state, budget);
+                        if (budget.kind === 'session') {
+                            const eta = await computeEtaForOrg(orgIdForEta);
+                            if (currentOrgId !== orgIdForEta) return;
+                            state = applyWeeklyEta(state, eta);
+                        }
                         overlay.render(state);
                     }
                 });
@@ -529,7 +555,7 @@ async function initializeMonitoring(): Promise<void> {
 
                 // fetchAndStoreUsageLimits catches all errors internally; it never
                 // throws. The .then() always runs.
-                fetchAndStoreUsageLimits(orgId).then(budgetAfter => {
+                fetchAndStoreUsageLimits(orgId).then(async budgetAfter => {
                     // Tracked utilization is tier-aware: 5-hour session % on Pro,
                     // monthly credit % on Enterprise. The unsupported variant has
                     // nothing to track, so we leave the snapshot null and skip
@@ -560,6 +586,10 @@ async function initializeMonitoring(): Promise<void> {
                     // Unsupported variants have no UI to render, so they never enter state.
                     if (budgetAfter !== null && budgetAfter.kind !== 'unsupported') {
                         state = applyUsageBudget(state, budgetAfter);
+                        if (budgetAfter.kind === 'session') {
+                            const eta = await computeEtaForOrg(orgId);
+                            state = applyWeeklyEta(state, eta);
+                        }
                     }
 
                     // Update overlay immediately with the exact session cost for
