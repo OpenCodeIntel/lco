@@ -25,6 +25,7 @@ import {
     appendUsageBudgetSnapshot,
     getUsageBudgetSnapshots,
     clearUsageBudgetSnapshots,
+    usageBudgetSnapshotsKey,
     MAX_TURNS_PER_RECORD,
     MAX_USAGE_DELTAS,
     MAX_USAGE_BUDGET_SNAPSHOTS,
@@ -1091,5 +1092,98 @@ describe('usage budget snapshots', () => {
         await expect(
             appendUsageBudgetSnapshot('', makeSnap(10)),
         ).rejects.toThrow('[LCO] accountId required for scoped storage key');
+    });
+});
+
+// ── Snapshot reset-detection invariant ───────────────────────────────────────
+// Background.ts detects a weekly-cap reset when newWeeklyPct < lastPct - 5,
+// then calls clearUsageBudgetSnapshots before appending the fresh reading.
+// These tests verify the store-level invariants that pattern relies on.
+
+describe('snapshot reset-detection invariant', () => {
+    function makeSnap(weeklyPct: number, ts: number): UsageBudgetSnapshot {
+        return { timestamp: ts, weeklyPct, sessionPct: 10 };
+    }
+
+    it('clear-then-append after >5pp drop yields only the new post-reset snapshot', async () => {
+        // Simulate several pre-reset snapshots.
+        await appendUsageBudgetSnapshot(TEST_ORG, makeSnap(70, 1_000));
+        await appendUsageBudgetSnapshot(TEST_ORG, makeSnap(80, 2_000));
+        await appendUsageBudgetSnapshot(TEST_ORG, makeSnap(85, 3_000));
+
+        // Background detects: newPct (5) < lastPct (85) - 5 = 80 → reset.
+        const before = await getUsageBudgetSnapshots(TEST_ORG);
+        const lastPct = before[before.length - 1].weeklyPct;
+        const newPct = 5;
+        if (newPct < lastPct - 5) {
+            await clearUsageBudgetSnapshots(TEST_ORG);
+        }
+        await appendUsageBudgetSnapshot(TEST_ORG, makeSnap(newPct, 4_000));
+
+        const after = await getUsageBudgetSnapshots(TEST_ORG);
+        expect(after).toHaveLength(1);
+        expect(after[0].weeklyPct).toBe(5);
+    });
+
+    it('a drop of exactly 5pp does NOT trigger a reset (strict < only)', async () => {
+        // Background condition: newPct < lastPct - 5 (strict less-than).
+        // A drop of exactly 5 (75 → 70) must NOT clear the list.
+        await appendUsageBudgetSnapshot(TEST_ORG, makeSnap(70, 1_000));
+        await appendUsageBudgetSnapshot(TEST_ORG, makeSnap(75, 2_000));
+
+        const before = await getUsageBudgetSnapshots(TEST_ORG);
+        const lastPct = before[before.length - 1].weeklyPct; // 75
+        const newPct = 70; // 70 < 75 - 5 = 70 → false (not strictly less)
+        if (newPct < lastPct - 5) {
+            await clearUsageBudgetSnapshots(TEST_ORG);
+        }
+        await appendUsageBudgetSnapshot(TEST_ORG, makeSnap(newPct, 3_000));
+
+        const after = await getUsageBudgetSnapshots(TEST_ORG);
+        expect(after).toHaveLength(3);
+    });
+
+    it('normal usage growth (rising weeklyPct) never triggers a reset', async () => {
+        for (let pct = 10; pct <= 50; pct += 10) {
+            const before = await getUsageBudgetSnapshots(TEST_ORG);
+            const lastPct = before.length > 0 ? before[before.length - 1].weeklyPct : -Infinity;
+            if (pct < lastPct - 5) {
+                await clearUsageBudgetSnapshots(TEST_ORG);
+            }
+            await appendUsageBudgetSnapshot(TEST_ORG, makeSnap(pct, pct * 1_000));
+        }
+        const result = await getUsageBudgetSnapshots(TEST_ORG);
+        expect(result).toHaveLength(5);
+        expect(result.map(s => s.weeklyPct)).toEqual([10, 20, 30, 40, 50]);
+    });
+});
+
+// ── usageBudgetSnapshotsKey: format contract ──────────────────────────────────
+// The content script reads snapshots directly from chrome.storage.local using
+// this exported key builder. If the format changes, the content script silently
+// reads empty snapshots. This test pins the format so a rename is a compile error
+// (wrong export name) or a test failure (changed format string).
+
+describe('usageBudgetSnapshotsKey format contract', () => {
+    it('produces the expected key string for a given orgId', () => {
+        const orgId = 'abc-123-def';
+        expect(usageBudgetSnapshotsKey(orgId)).toBe('usageBudgetSnapshots:abc-123-def');
+    });
+
+    it('throws on empty accountId (mirrors assertAccountId guard)', () => {
+        expect(() => usageBudgetSnapshotsKey('')).toThrow(
+            '[LCO] accountId required for scoped storage key',
+        );
+    });
+
+    it('snapshots stored via appendUsageBudgetSnapshot are readable at usageBudgetSnapshotsKey', async () => {
+        const orgId = 'key-format-test-org';
+        const snap: UsageBudgetSnapshot = { timestamp: 9_999, weeklyPct: 42, sessionPct: 15 };
+        await appendUsageBudgetSnapshot(orgId, snap);
+        // Read back via mock store at the exact key the content script will use.
+        const key = usageBudgetSnapshotsKey(orgId);
+        const raw = mockStore._raw[key];
+        expect(Array.isArray(raw)).toBe(true);
+        expect((raw as UsageBudgetSnapshot[])[0].weeklyPct).toBe(42);
     });
 });

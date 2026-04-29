@@ -155,7 +155,8 @@ function usageLimitsKey(accountId: string): string { assertAccountId(accountId);
 function usageDeltasKey(accountId: string): string { assertAccountId(accountId); return `usageDeltas:${accountId}`; }
 // Rolling snapshot list for the weekly-cap ETA agent, capped at MAX_USAGE_BUDGET_SNAPSHOTS.
 // Reset by clearUsageBudgetSnapshots on weekly-cap reset detection in background.ts.
-function usageBudgetSnapshotsKey(accountId: string): string { assertAccountId(accountId); return `usageBudgetSnapshots:${accountId}`; }
+// Exported so content scripts can read the key directly without going through setStorage.
+export function usageBudgetSnapshotsKey(accountId: string): string { assertAccountId(accountId); return `usageBudgetSnapshots:${accountId}`; }
 
 // Legacy (pre-account-isolation) key builders for read-through migration.
 function legacyConvKey(convId: string): string { return `conv:${convId}`; }

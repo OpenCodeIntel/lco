@@ -22,7 +22,7 @@ import type { PromptCharacteristics, DeltaPromptContext } from '../lib/prompt-an
 import { analyzeDelta } from '../lib/delta-coaching';
 import type { DeltaCoachInput } from '../lib/delta-coaching';
 import { getContextWindowSize, calculateCost } from '../lib/pricing';
-import { extractConversationId } from '../lib/conversation-store';
+import { extractConversationId, usageBudgetSnapshotsKey } from '../lib/conversation-store';
 import type { ConversationRecord } from '../lib/conversation-store';
 import { computeHealthScore, computeGrowthRate } from '../lib/health-score';
 import { buildHandoffSummary } from '../lib/handoff-summary';
@@ -137,8 +137,8 @@ async function fetchAndStoreUsageLimits(orgId: string): Promise<UsageBudgetResul
  */
 async function computeEtaForOrg(orgId: string): Promise<import('../lib/weekly-cap-eta').WeeklyEta | null> {
     try {
-        const key = `usageBudgetSnapshots:${orgId}`;
-        const data = await chrome.storage.local.get(key);
+        const key = usageBudgetSnapshotsKey(orgId);
+        const data = await browser.storage.local.get(key);
         const raw = data[key];
         const snapshots: UsageBudgetSnapshot[] = Array.isArray(raw) ? raw as UsageBudgetSnapshot[] : [];
         return computeWeeklyEta(snapshots, Date.now());
