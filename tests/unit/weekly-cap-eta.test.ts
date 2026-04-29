@@ -2,12 +2,12 @@
 // Unit tests for the Weekly Cap ETA Agent (lib/weekly-cap-eta.ts).
 //
 // Covers every acceptance criterion from GET-21:
-//   AC1 — stable rising usage → ETA shown
-//   AC2 — flat or decreasing → null
-//   AC3 — confidence degrades with low sample / poor fit
-//   AC4 — hidden on credit/unsupported (enforced at call site, not tested here)
-//   AC5 — stable-rising, flat, decreasing, low-sample, post-reset test cases
-//   AC6 — no ETA immediately after weekly reset (cleared snapshots → null)
+//   AC1: stable rising usage → ETA shown
+//   AC2: flat or decreasing → null
+//   AC3: confidence degrades with low sample / poor fit
+//   AC4: hidden on credit/unsupported (enforced at call site, not tested here)
+//   AC5: stable-rising, flat, decreasing, low-sample, post-reset test cases
+//   AC6: no ETA immediately after weekly reset (cleared snapshots → null)
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -52,7 +52,7 @@ function nowAfter(n: number, baseMs = BASE): number {
 
 // ── AC5/AC1: stable-rising series ────────────────────────────────────────────
 
-describe('computeWeeklyEta — stable rising usage', () => {
+describe('computeWeeklyEta:stable rising usage', () => {
     it('returns a non-null result when usage rises at a stable rate', () => {
         // 10 snapshots, rising 5%/hr: starts at 20, hits 100 in 16h from start.
         const snaps = linearSeries(20, 5, 10);
@@ -118,7 +118,7 @@ describe('computeWeeklyEta — stable rising usage', () => {
 
 // ── AC5/AC2: flat usage ───────────────────────────────────────────────────────
 
-describe('computeWeeklyEta — flat usage', () => {
+describe('computeWeeklyEta:flat usage', () => {
     it('returns null when range < 10pp across a 24h+ span', () => {
         // 10 snapshots over 25 hours, all clustered around 40%
         const snaps = Array.from({ length: 10 }, (_, i) =>
@@ -128,25 +128,22 @@ describe('computeWeeklyEta — flat usage', () => {
         expect(computeWeeklyEta(snaps, now)).toBeNull();
     });
 
-    it('does not return null for a flat span shorter than 24h', () => {
-        // 10 snapshots over 10 hours, flat (< 24h so flatness guard does not apply)
+    it('does not return null for a rising series shorter than 24h', () => {
+        // 10 snapshots over 10 hours, clear positive slope (3%/hr).
+        // Span is < 24h so the flatness guard cannot fire; the slope guard
+        // also cannot fire because the rate is well above zero.
         const snaps = Array.from({ length: 10 }, (_, i) =>
-            snap(BASE + i * HOUR_MS, 50 + (i % 2)), // only 1pp range, but <24h
+            snap(BASE + i * HOUR_MS, 10 + i * 3),
         );
-        const now = nowAfter(10);
-        // Slope may be near zero, so null is acceptable — the key assertion is
-        // that the flatness guard (24h + <10pp) does NOT fire here.
-        // We just confirm the guard itself does not reject short spans.
-        // (A near-zero slope will still return null via the slope <= 0 guard.)
-        const result = computeWeeklyEta(snaps, now);
-        // Either null (slope guard) or non-null (tiny positive slope): both are valid.
-        expect(result === null || result.hoursRemaining > 0).toBe(true);
+        const result = computeWeeklyEta(snaps, nowAfter(10));
+        expect(result).not.toBeNull();
+        expect(result!.hoursRemaining).toBeGreaterThan(0);
     });
 });
 
 // ── AC5/AC2: decreasing usage ─────────────────────────────────────────────────
 
-describe('computeWeeklyEta — decreasing usage', () => {
+describe('computeWeeklyEta:decreasing usage', () => {
     it('returns null when weeklyPct is steadily declining', () => {
         const snaps = linearSeries(80, -5, 8); // drops from 80 down
         const now = nowAfter(8);
@@ -164,7 +161,7 @@ describe('computeWeeklyEta — decreasing usage', () => {
 
 // ── AC5: low-sample ───────────────────────────────────────────────────────────
 
-describe('computeWeeklyEta — low sample count', () => {
+describe('computeWeeklyEta:low sample count', () => {
     it('returns null with 0 snapshots', () => {
         expect(computeWeeklyEta([], BASE)).toBeNull();
     });
@@ -187,7 +184,7 @@ describe('computeWeeklyEta — low sample count', () => {
 
 // ── AC6: post-reset (cleared snapshots) ───────────────────────────────────────
 
-describe('computeWeeklyEta — post weekly reset', () => {
+describe('computeWeeklyEta:post weekly reset', () => {
     it('returns null immediately after reset (0 snapshots after clear)', () => {
         // Clearing snapshots is handled by clearUsageBudgetSnapshots in background.ts.
         // From the agent's perspective this is identical to the low-sample case.
@@ -203,7 +200,7 @@ describe('computeWeeklyEta — post weekly reset', () => {
 
 // ── ETA boundary guards ───────────────────────────────────────────────────────
 
-describe('computeWeeklyEta — ETA boundary guards', () => {
+describe('computeWeeklyEta:ETA boundary guards', () => {
     it('returns null when the projected ETA is already in the past', () => {
         // Build a series that was "supposed to" hit 100% in the past.
         // Shift "now" to be long after the last snapshot.
@@ -239,7 +236,7 @@ describe('formatEtaLabel', () => {
 
 // ── Unsorted input ────────────────────────────────────────────────────────────
 
-describe('computeWeeklyEta — unsorted input', () => {
+describe('computeWeeklyEta:unsorted input', () => {
     it('produces the same result regardless of input order', () => {
         const ordered = linearSeries(10, 5, 10);
         const shuffled = [...ordered].reverse();

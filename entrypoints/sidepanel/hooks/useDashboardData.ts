@@ -134,6 +134,12 @@ export function useDashboardData(): DashboardData {
     // Ref mirror of isClaudeTab so event listeners (closures) can read the current
     // value without capturing a stale boolean from the render cycle.
     const isClaudeTabRef = useRef(false);
+    // Monotonic counter incremented at the start of every loadWeeklyEta call and
+    // whenever weeklyEta is explicitly cleared. An in-flight resolution checks that
+    // its captured ID still matches before calling setWeeklyEta, preventing a stale
+    // response from overwriting a later explicit clear (e.g., same org, two rapid
+    // tab switches where orgId ends up equal but requests are from different cycles).
+    const weeklyEtaRequestIdRef = useRef(0);
 
     // Sync helper: always update both the React state and the ref together so
     // they never drift. All code that changes isClaudeTab must use this.
@@ -209,6 +215,7 @@ export function useDashboardData(): DashboardData {
     }, []);
 
     const loadWeeklyEta = useCallback(async () => {
+        const requestId = ++weeklyEtaRequestIdRef.current;
         try {
             const orgId = orgIdRef.current;
             if (!orgId) {
@@ -216,7 +223,7 @@ export function useDashboardData(): DashboardData {
                 return;
             }
             const snapshots = await getUsageBudgetSnapshots(orgId);
-            if (orgIdRef.current !== orgId) return;
+            if (orgIdRef.current !== orgId || weeklyEtaRequestIdRef.current !== requestId) return;
             setWeeklyEta(computeWeeklyEta(snapshots, Date.now()));
         } catch {
             // Non-critical: ETA panel simply stays hidden.
@@ -250,6 +257,7 @@ export function useDashboardData(): DashboardData {
                     setToday(null);
                     setConversations([]);
                     setBudget(null);
+                    weeklyEtaRequestIdRef.current++;
                     setWeeklyEta(null);
                     setTokenEconomics(null);
                 }
