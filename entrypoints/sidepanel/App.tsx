@@ -35,6 +35,8 @@ export default function App() {
         budget,
         isClaudeTab,
         weeklyEta,
+        spendTrajectory,
+        topSpendConversations,
         loading,
     } = useDashboardData();
 
@@ -79,7 +81,14 @@ export default function App() {
                 tier variant (session/credit/unsupported) and chooses the
                 empty-state copy from `isClaudeTab`. */}
             <CollapsibleSection title="Usage Budget" storageKey="budget" defaultOpen>
-                <UsageBudgetCard budget={budget} isClaudeTab={isClaudeTab} weeklyEta={weeklyEta} />
+                <UsageBudgetCard
+                    budget={budget}
+                    isClaudeTab={isClaudeTab}
+                    weeklyEta={weeklyEta}
+                    spendTrajectory={spendTrajectory}
+                    topSpendConversations={topSpendConversations}
+                    conversations={conversations}
+                />
             </CollapsibleSection>
 
             <CollapsibleSection title="Active Conversation" storageKey="active" defaultOpen>

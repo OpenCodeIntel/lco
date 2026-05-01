@@ -29,6 +29,7 @@ import type {
     UsageBudgetCredit,
     BudgetZone,
 } from './message-types';
+import { formatCurrencyCents } from './format';
 
 // ── Zone classification ───────────────────────────────────────────────────────
 
@@ -115,44 +116,6 @@ function buildSessionStatusLabel(sessionPct: number, sessionMinutes: number, zon
 
 // ── Credit-tier helpers ──────────────────────────────────────────────────────
 
-// `Intl.NumberFormat` constructors are not free; on a hot card render we would
-// build two per call (used + monthly). Cache by currency code: the same code
-// is reused across renders for one account, and the cache is bounded by the
-// number of currencies Anthropic actually returns (one per account, ever).
-// `null` marks codes Intl rejected so we do not retry the constructor.
-const currencyFormatterCache = new Map<string, Intl.NumberFormat | null>();
-
-function currencyFormatter(currency: string): Intl.NumberFormat | null {
-    if (currencyFormatterCache.has(currency)) {
-        return currencyFormatterCache.get(currency) ?? null;
-    }
-    try {
-        const fmt = new Intl.NumberFormat(undefined, {
-            style: 'currency',
-            currency,
-            currencyDisplay: 'symbol',
-        });
-        currencyFormatterCache.set(currency, fmt);
-        return fmt;
-    } catch {
-        // Unknown currency code: cache the failure so we do not retry.
-        currencyFormatterCache.set(currency, null);
-        return null;
-    }
-}
-
-/**
- * Format an integer cent amount in the given currency.
- * 30491 USD → "$304.91". Falls back to a portable "USD 304.91" form for any
- * currency code Intl cannot resolve, so the card never shows NaN or an empty
- * string.
- */
-function formatCents(cents: number, currency: string): string {
-    const amount = cents / 100;
-    const fmt = currencyFormatter(currency);
-    return fmt ? fmt.format(amount) : `${currency} ${amount.toFixed(2)}`;
-}
-
 /**
  * "Resets May 1": first day of the next calendar month, locale-formatted.
  * Anthropic resets Enterprise credit pools on the first of the month, so the
@@ -210,8 +173,8 @@ export function computeUsageBudget(limits: UsageLimitsData, now: number): UsageB
 
     if (limits.kind === 'credit') {
         const zone = classifyZone(limits.utilizationPct);
-        const spent = formatCents(limits.usedCents, limits.currency);
-        const total = formatCents(limits.monthlyLimitCents, limits.currency);
+        const spent = formatCurrencyCents(limits.usedCents, limits.currency);
+        const total = formatCurrencyCents(limits.monthlyLimitCents, limits.currency);
         const result: UsageBudgetCredit = {
             kind: 'credit',
             monthlyLimitCents: limits.monthlyLimitCents,

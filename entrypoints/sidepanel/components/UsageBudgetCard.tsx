@@ -22,6 +22,9 @@ import React from 'react';
 import type { UsageBudgetResult, UsageBudgetSession, UsageBudgetCredit, BudgetZone } from '../../../lib/message-types';
 import { classifyZone } from '../../../lib/usage-budget';
 import { formatEtaLabel, type WeeklyEta } from '../../../lib/weekly-cap-eta';
+import { formatCurrencyCents } from '../../../lib/format';
+import type { SpendTrajectory, ConversationSpend } from '../../../lib/spend-trajectory';
+import type { ConversationRecord } from '../../../lib/conversation-store';
 
 interface Props {
     budget: UsageBudgetResult | null;
@@ -37,6 +40,23 @@ interface Props {
      * Session tier only; credit/unsupported cards never receive this.
      */
     weeklyEta?: WeeklyEta | null;
+    /**
+     * Month-end spend projection. Credit-tier only; null on session/unsupported
+     * tiers and until at least 7 distinct cost-bearing days have accumulated
+     * in the current month.
+     */
+    spendTrajectory?: SpendTrajectory | null;
+    /**
+     * Top conversations of the current month, ranked descending by total cost.
+     * Credit-tier only; empty array everywhere else.
+     */
+    topSpendConversations?: ConversationSpend[];
+    /**
+     * Recent conversations from the History panel. Used to join conversationId
+     * from `topSpendConversations` to a human-readable subject without an
+     * additional storage read.
+     */
+    conversations?: ConversationRecord[];
 }
 
 // Zone-to-label mapping for the dot and fills. Mirrors the health dot
@@ -50,7 +70,14 @@ const ZONE_LABELS: Record<BudgetZone, string> = {
     critical: 'Critical',
 };
 
-export default function UsageBudgetCard({ budget, isClaudeTab, weeklyEta }: Props) {
+export default function UsageBudgetCard({
+    budget,
+    isClaudeTab,
+    weeklyEta,
+    spendTrajectory,
+    topSpendConversations,
+    conversations,
+}: Props) {
     // No data at all + the user is on a tab where we cannot fetch any.
     // Surface the obvious next action rather than a silent empty card.
     if (!budget && !isClaudeTab) {
@@ -77,7 +104,12 @@ export default function UsageBudgetCard({ budget, isClaudeTab, weeklyEta }: Prop
     // `budget.kind` lets TypeScript narrow into the right field set.
     return budget.kind === 'session'
         ? <SessionBudget budget={budget} eta={weeklyEta ?? null} />
-        : <CreditBudget budget={budget} />;
+        : <CreditBudget
+            budget={budget}
+            trajectory={spendTrajectory ?? null}
+            topSpenders={topSpendConversations ?? []}
+            conversations={conversations ?? []}
+        />;
 }
 
 // ── Session variant (Pro / Personal / Max) ───────────────────────────────────
@@ -149,8 +181,18 @@ function SessionBudget({ budget, eta }: { budget: UsageBudgetSession; eta: Weekl
 
 // ── Credit variant (Enterprise) ──────────────────────────────────────────────
 
-function CreditBudget({ budget }: { budget: UsageBudgetCredit }) {
-    const { utilizationPct, zone, statusLabel, resetLabel } = budget;
+function CreditBudget({
+    budget,
+    trajectory,
+    topSpenders,
+    conversations,
+}: {
+    budget: UsageBudgetCredit;
+    trajectory: SpendTrajectory | null;
+    topSpenders: ConversationSpend[];
+    conversations: ConversationRecord[];
+}) {
+    const { utilizationPct, zone, statusLabel, resetLabel, currency, monthlyLimitCents } = budget;
     const safePct = Math.min(Math.max(utilizationPct, 0), 100);
 
     return (
@@ -166,6 +208,13 @@ function CreditBudget({ budget }: { budget: UsageBudgetCredit }) {
 
             {/* Primary status line: "$304.91 of $500.00 spent" */}
             <p className="lco-dash-budget-status">{statusLabel}</p>
+
+            {/* Trajectory line: confidence-tiered projection, or a "need more data"
+                placeholder when fewer than 7 cost-bearing days have accumulated this
+                month. Hidden in the empty-state when there is nothing to say. */}
+            <p className="lco-dash-budget-trajectory">
+                {formatTrajectoryLine(trajectory, currency, monthlyLimitCents)}
+            </p>
 
             {/* Single monthly spend bar */}
             <div className="lco-dash-budget-row">
@@ -183,6 +232,50 @@ function CreditBudget({ budget }: { budget: UsageBudgetCredit }) {
             <div className="lco-dash-budget-resets">
                 <span>{resetLabel}</span>
             </div>
+
+            {/* Top spenders: native <details> for native expand/collapse without
+                extra state. Hidden when there is nothing to rank yet. */}
+            {topSpenders.length > 0 && (
+                <details className="lco-dash-budget-spenders">
+                    <summary className="lco-dash-budget-spenders-summary">
+                        Top conversations this month
+                    </summary>
+                    <div className="lco-dash-budget-spenders-list">
+                        {topSpenders.map((spender) => (
+                            <SpenderRow
+                                key={spender.conversationId}
+                                spender={spender}
+                                conversations={conversations}
+                                currency={currency}
+                            />
+                        ))}
+                    </div>
+                </details>
+            )}
+        </div>
+    );
+}
+
+function SpenderRow({
+    spender,
+    conversations,
+    currency,
+}: {
+    spender: ConversationSpend;
+    conversations: ConversationRecord[];
+    currency: string;
+}) {
+    const match = conversations.find((c) => c.id === spender.conversationId);
+    const subject = match?.dna?.subject || 'Untitled conversation';
+    return (
+        <div className="lco-dash-budget-spender">
+            <span className="lco-dash-budget-spender-subject">{subject}</span>
+            <span className="lco-dash-budget-spender-cost">
+                {formatCurrencyCents(spender.totalCostCents, currency)}
+            </span>
+            <span className="lco-dash-budget-spender-turns">
+                {spender.turnCount} turn{spender.turnCount === 1 ? '' : 's'}
+            </span>
         </div>
     );
 }
@@ -211,4 +304,40 @@ function formatEtaLine(eta: WeeklyEta): string {
         case 'low':
             return `Estimating: cap by ${label}. Need more data for confidence.`;
     }
+}
+
+/**
+ * Build the credit-tier trajectory line. Copy varies by confidence to set the
+ * user's expectation; a null trajectory becomes the "need more data" placeholder
+ * so the layout never collapses while the agent waits for enough samples.
+ */
+function formatTrajectoryLine(
+    trajectory: SpendTrajectory | null,
+    currency: string,
+    monthlyLimitCents: number,
+): string {
+    if (!trajectory) {
+        return 'Need 7+ days of usage before we can project month-end.';
+    }
+    const projected = formatCurrencyCents(trajectory.projectedSpentCents, currency);
+    const limit = formatCurrencyCents(monthlyLimitCents, currency);
+    const monthEnd = formatMonthEndLabel(trajectory.daysRemaining);
+    switch (trajectory.confidence) {
+        case 'high':
+            return `On track for ${projected} of ${limit} by ${monthEnd}.`;
+        case 'medium':
+            return `Estimated month-end: ${projected} of ${limit}. Estimate firms up over the next week.`;
+        case 'low':
+            return `Estimating: ${projected} of ${limit} by ${monthEnd}. Need more data for confidence.`;
+    }
+}
+
+/** "Apr 30" / "May 1": the user-facing label for the projection target. */
+function formatMonthEndLabel(daysRemaining: number): string {
+    const target = new Date();
+    target.setDate(target.getDate() + daysRemaining);
+    return new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+    }).format(target);
 }

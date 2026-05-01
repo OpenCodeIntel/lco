@@ -31,6 +31,13 @@ import { computeHealthScore, computeGrowthRate, type HealthScore } from '../../.
 import { computeUsageBudget } from '../../../lib/usage-budget';
 import { computeTokenEconomics, type TokenEconomicsResult } from '../../../lib/token-economics';
 import { computeWeeklyEta, type WeeklyEta } from '../../../lib/weekly-cap-eta';
+import {
+    projectMonthEnd,
+    aggregateByConversation,
+    startOfMonth,
+    type SpendTrajectory,
+    type ConversationSpend,
+} from '../../../lib/spend-trajectory';
 import type { UsageBudgetResult } from '../../../lib/message-types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -41,6 +48,9 @@ const CLAUDE_DOMAIN = 'claude.ai';
 
 // Maximum number of past conversations to load into the History panel.
 const CONVERSATION_LIMIT = 20;
+
+// Number of top spenders to surface on the credit-tier card.
+const TOP_SPENDERS_LIMIT = 3;
 
 // ── Tab URL gate ──────────────────────────────────────────────────────────────
 
@@ -111,6 +121,19 @@ export interface DashboardData {
      * Session tier only (Pro/Max). Always null on Enterprise and unsupported tiers.
      */
     weeklyEta: WeeklyEta | null;
+    /**
+     * Projected month-end spend for credit-tier (Enterprise) accounts.
+     * Null until at least MIN_DISTINCT_DAYS_FOR_PROJECTION distinct cost-bearing
+     * days have accumulated in the current month, or when the current tier is
+     * not 'credit'. Drives the "On track for $X of $Y by …" line on the card.
+     */
+    spendTrajectory: SpendTrajectory | null;
+    /**
+     * Top conversations of the current month, ranked descending by total cost.
+     * Empty array when no credit-tier deltas exist yet, or on session/unsupported
+     * tiers. Capped at TOP_SPENDERS_LIMIT entries.
+     */
+    topSpendConversations: ConversationSpend[];
     loading: boolean;
 }
 
@@ -125,6 +148,8 @@ export function useDashboardData(): DashboardData {
     const [isClaudeTab, setIsClaudeTab] = useState(false);
     const [tokenEconomics, setTokenEconomics] = useState<TokenEconomicsResult | null>(null);
     const [weeklyEta, setWeeklyEta] = useState<WeeklyEta | null>(null);
+    const [spendTrajectory, setSpendTrajectory] = useState<SpendTrajectory | null>(null);
+    const [topSpendConversations, setTopSpendConversations] = useState<ConversationSpend[]>([]);
     const [loading, setLoading] = useState(true);
 
     // Track current tab ID so we know which activeConv_ key to watch.
@@ -140,6 +165,8 @@ export function useDashboardData(): DashboardData {
     // response from overwriting a later explicit clear (e.g., same org, two rapid
     // tab switches where orgId ends up equal but requests are from different cycles).
     const weeklyEtaRequestIdRef = useRef(0);
+    // Same pattern for the credit-tier spend trajectory loader.
+    const spendTrajectoryRequestIdRef = useRef(0);
 
     // Sync helper: always update both the React state and the ref together so
     // they never drift. All code that changes isClaudeTab must use this.
@@ -230,6 +257,48 @@ export function useDashboardData(): DashboardData {
         }
     }, []);
 
+    const loadSpendTrajectory = useCallback(async () => {
+        const requestId = ++spendTrajectoryRequestIdRef.current;
+        try {
+            const orgId = orgIdRef.current;
+            if (!orgId) {
+                setSpendTrajectory(null);
+                setTopSpendConversations([]);
+                return;
+            }
+
+            // Read the typed usage record so we can branch on tier without
+            // depending on the React-state `budget` (which closures here
+            // would capture stale). Trajectory only renders for credit tier;
+            // anything else clears both fields.
+            const limits = await getUsageLimits(orgId);
+            if (orgIdRef.current !== orgId || spendTrajectoryRequestIdRef.current !== requestId) return;
+            if (!limits || limits.kind !== 'credit') {
+                setSpendTrajectory(null);
+                setTopSpendConversations([]);
+                return;
+            }
+
+            const deltas = await getUsageDeltas(orgId);
+            if (orgIdRef.current !== orgId || spendTrajectoryRequestIdRef.current !== requestId) return;
+
+            const now = Date.now();
+            const trajectory = projectMonthEnd(
+                deltas,
+                now,
+                limits.monthlyLimitCents,
+                limits.usedCents,
+            );
+            const topSpenders = aggregateByConversation(deltas, startOfMonth(now))
+                .slice(0, TOP_SPENDERS_LIMIT);
+
+            setSpendTrajectory(trajectory);
+            setTopSpendConversations(topSpenders);
+        } catch {
+            // Non-critical: trajectory and top-spenders simply stay hidden.
+        }
+    }, []);
+
     const loadActiveConversation = useCallback(async (tabId: number) => {
         try {
             // Read the active conversation and org ID for this tab from session storage.
@@ -259,6 +328,9 @@ export function useDashboardData(): DashboardData {
                     setBudget(null);
                     weeklyEtaRequestIdRef.current++;
                     setWeeklyEta(null);
+                    spendTrajectoryRequestIdRef.current++;
+                    setSpendTrajectory(null);
+                    setTopSpendConversations([]);
                     setTokenEconomics(null);
                 }
                 return;
@@ -290,13 +362,14 @@ export function useDashboardData(): DashboardData {
                 loadToday();
                 loadBudget();
                 loadWeeklyEta();
+                loadSpendTrajectory();
                 loadTokenEconomics();
             }
         } catch {
             setActiveConv(null);
             setActiveHealth(null);
         }
-    }, [loadConversations, loadToday, loadBudget, loadWeeklyEta, loadTokenEconomics]);
+    }, [loadConversations, loadToday, loadBudget, loadWeeklyEta, loadSpendTrajectory, loadTokenEconomics]);
 
     // ── Initial load ──────────────────────────────────────────────────────────
 
@@ -326,6 +399,7 @@ export function useDashboardData(): DashboardData {
             if (onClaude) {
                 await loadBudget();
                 loadWeeklyEta();
+                loadSpendTrajectory();
             }
             // Token economics is non-blocking: fire after the main data loads.
             // It requires enough delta records to be meaningful (MIN_SAMPLES per model),
@@ -335,7 +409,7 @@ export function useDashboardData(): DashboardData {
         }
 
         init();
-    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadWeeklyEta, loadTokenEconomics]);
+    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadWeeklyEta, loadSpendTrajectory, loadTokenEconomics]);
 
     // ── Live subscriptions ────────────────────────────────────────────────────
 
@@ -379,6 +453,9 @@ export function useDashboardData(): DashboardData {
                 // this check the budget card would silently re-populate on a non-Claude tab.
                 if (hasBudgetChange && isClaudeTabRef.current) {
                     loadBudget();
+                    // Trajectory depends on the current usedCents/monthlyLimitCents
+                    // from the same usageLimits record, so refresh it together.
+                    loadSpendTrajectory();
                 }
                 const hasSnapshotChange = keys.some(k => k.startsWith('usageBudgetSnapshots:'));
                 if (hasSnapshotChange && isClaudeTabRef.current) {
@@ -386,6 +463,11 @@ export function useDashboardData(): DashboardData {
                 }
                 if (hasDeltaChange) {
                     loadTokenEconomics();
+                    // Each new turn moves the burn rate and the per-conversation
+                    // ranking; refresh the trajectory so the credit card stays live.
+                    if (isClaudeTabRef.current) {
+                        loadSpendTrajectory();
+                    }
                 }
             }
 
@@ -420,11 +502,14 @@ export function useDashboardData(): DashboardData {
             if (onClaude) {
                 loadBudget();
                 loadWeeklyEta();
+                loadSpendTrajectory();
             } else {
                 // Explicitly clear budget -- do not show stale data from the previous
                 // Claude tab while the user is on Gmail, GitHub, etc.
                 setBudget(null);
                 setWeeklyEta(null);
+                setSpendTrajectory(null);
+                setTopSpendConversations([]);
             }
         }
 
@@ -449,10 +534,13 @@ export function useDashboardData(): DashboardData {
                 // Navigated back to claude.ai: reload live data.
                 loadBudget();
                 loadWeeklyEta();
+                loadSpendTrajectory();
             } else {
                 // Navigated away: clear live data immediately.
                 setBudget(null);
                 setWeeklyEta(null);
+                setSpendTrajectory(null);
+                setTopSpendConversations([]);
             }
         }
 
@@ -466,6 +554,8 @@ export function useDashboardData(): DashboardData {
             applyIsClaudeTab(false);
             setBudget(null);
             setWeeklyEta(null);
+            setSpendTrajectory(null);
+            setTopSpendConversations([]);
         }
 
         chrome.storage.onChanged.addListener(onStorageChanged);
@@ -479,7 +569,19 @@ export function useDashboardData(): DashboardData {
             chrome.tabs.onUpdated.removeListener(onTabUpdated);
             chrome.tabs.onRemoved.removeListener(onTabRemoved);
         };
-    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadWeeklyEta, loadTokenEconomics]);
+    }, [loadToday, loadConversations, loadActiveConversation, loadBudget, loadWeeklyEta, loadSpendTrajectory, loadTokenEconomics]);
 
-    return { today, activeConv, activeHealth, conversations, budget, isClaudeTab, tokenEconomics, weeklyEta, loading };
+    return {
+        today,
+        activeConv,
+        activeHealth,
+        conversations,
+        budget,
+        isClaudeTab,
+        tokenEconomics,
+        weeklyEta,
+        spendTrajectory,
+        topSpendConversations,
+        loading,
+    };
 }

@@ -67,6 +67,46 @@ export function formatApiRateCost(
     return `≈${base}`;                         // session, unsupported, or unknown
 }
 
+// `Intl.NumberFormat` constructors are not free; on a hot card render we would
+// build several per call (status line, projection line, each spender row).
+// Cache by currency code: the same code is reused across renders for one
+// account, and the cache is bounded by the number of currencies the endpoint
+// actually returns (one per account). `null` marks codes Intl rejected so we
+// do not retry the constructor.
+const currencyFormatterCache = new Map<string, Intl.NumberFormat | null>();
+
+function currencyFormatter(currency: string): Intl.NumberFormat | null {
+    if (currencyFormatterCache.has(currency)) {
+        return currencyFormatterCache.get(currency) ?? null;
+    }
+    try {
+        const fmt = new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency,
+            currencyDisplay: 'symbol',
+        });
+        currencyFormatterCache.set(currency, fmt);
+        return fmt;
+    } catch {
+        currencyFormatterCache.set(currency, null);
+        return null;
+    }
+}
+
+/**
+ * Format an integer cent amount in the given currency.
+ * 30491 USD → "$304.91". Falls back to a portable "USD 304.91" form for any
+ * currency code Intl cannot resolve, so callers never render NaN or an empty
+ * string. Single source of truth for cent-to-currency formatting; both the
+ * Usage Budget agent and the side-panel card route through here so display
+ * stays consistent.
+ */
+export function formatCurrencyCents(cents: number, currency: string): string {
+    const amount = cents / 100;
+    const fmt = currencyFormatter(currency);
+    return fmt ? fmt.format(amount) : `${currency} ${amount.toFixed(2)}`;
+}
+
 /**
  * Format a model identifier for human display.
  * "claude-sonnet-4-6" -> "Sonnet 4.6"

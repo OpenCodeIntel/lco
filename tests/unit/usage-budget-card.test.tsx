@@ -18,6 +18,8 @@ import { render, screen } from '@testing-library/react';
 import UsageBudgetCard from '../../entrypoints/sidepanel/components/UsageBudgetCard';
 import type { UsageBudgetSession, UsageBudgetCredit, UsageBudgetResult } from '../../lib/message-types';
 import type { WeeklyEta } from '../../lib/weekly-cap-eta';
+import type { SpendTrajectory, ConversationSpend } from '../../lib/spend-trajectory';
+import type { ConversationRecord } from '../../lib/conversation-store';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -201,5 +203,192 @@ describe('UsageBudgetCard — weekly ETA', () => {
     it('does not render ETA on the credit (Enterprise) variant', () => {
         render(<UsageBudgetCard budget={creditBudget()} isClaudeTab={true} weeklyEta={makeEta('high')} />);
         expect(screen.queryByText(/At this pace/)).toBeNull();
+    });
+});
+
+// ── Spend trajectory + top spenders (GET-22) ─────────────────────────────────
+// The trajectory line and the expandable top-spenders section render on the
+// credit variant only. They are absent on session and unsupported variants.
+
+describe('UsageBudgetCard — spend trajectory (credit variant)', () => {
+    function makeTrajectory(overrides: Partial<SpendTrajectory> = {}): SpendTrajectory {
+        return {
+            projectedSpentCents: 31200,
+            projectedUtilizationPct: 62.4,
+            daysRemaining: 16,
+            confidence: 'high',
+            ...overrides,
+        };
+    }
+
+    function makeSpenders(): ConversationSpend[] {
+        return [
+            { conversationId: 'conv-A', totalCostCents: 9412, turnCount: 18 },
+            { conversationId: 'conv-B', totalCostCents: 4280, turnCount: 11 },
+            { conversationId: 'conv-C', totalCostCents: 2150, turnCount: 6 },
+        ];
+    }
+
+    function makeConversations(): ConversationRecord[] {
+        const baseTurn = {
+            turnNumber: 1,
+            inputTokens: 0,
+            outputTokens: 0,
+            model: 'claude-sonnet-4-6',
+            contextPct: 0,
+            cost: 0,
+            completedAt: 0,
+        };
+        return [
+            {
+                id: 'conv-A',
+                startedAt: 0,
+                lastActiveAt: 0,
+                finalized: false,
+                turnCount: 18,
+                totalInputTokens: 0,
+                totalOutputTokens: 0,
+                peakContextPct: 0,
+                lastContextPct: 0,
+                model: 'claude-sonnet-4-6',
+                estimatedCost: 94.12,
+                turns: [baseTurn],
+                dna: { subject: 'Refactor auth middleware', lastContext: '', hints: [] },
+                _v: 1,
+            },
+            {
+                id: 'conv-B',
+                startedAt: 0,
+                lastActiveAt: 0,
+                finalized: false,
+                turnCount: 11,
+                totalInputTokens: 0,
+                totalOutputTokens: 0,
+                peakContextPct: 0,
+                lastContextPct: 0,
+                model: 'claude-sonnet-4-6',
+                estimatedCost: 42.80,
+                turns: [baseTurn],
+                dna: { subject: 'Q2 hiring plan draft', lastContext: '', hints: [] },
+                _v: 1,
+            },
+        ];
+    }
+
+    it('renders "Need 7+ days" placeholder when trajectory is null', () => {
+        render(
+            <UsageBudgetCard
+                budget={creditBudget()}
+                isClaudeTab={true}
+                spendTrajectory={null}
+                topSpendConversations={[]}
+                conversations={[]}
+            />,
+        );
+        expect(screen.getByText(/Need 7\+ days of usage/)).toBeTruthy();
+    });
+
+    it('renders high-confidence "On track" copy with projected and limit amounts', () => {
+        render(
+            <UsageBudgetCard
+                budget={creditBudget()}
+                isClaudeTab={true}
+                spendTrajectory={makeTrajectory({ confidence: 'high' })}
+                topSpendConversations={[]}
+                conversations={[]}
+            />,
+        );
+        expect(screen.getByText(/On track for \$312\.00 of \$500\.00 by/)).toBeTruthy();
+    });
+
+    it('renders medium-confidence copy with the firm-up qualifier', () => {
+        render(
+            <UsageBudgetCard
+                budget={creditBudget()}
+                isClaudeTab={true}
+                spendTrajectory={makeTrajectory({ confidence: 'medium' })}
+                topSpendConversations={[]}
+                conversations={[]}
+            />,
+        );
+        expect(screen.getByText(/Estimated month-end:/)).toBeTruthy();
+        expect(screen.getByText(/Estimate firms up over the next week/)).toBeTruthy();
+    });
+
+    it('renders low-confidence copy with the "need more data" hedge', () => {
+        render(
+            <UsageBudgetCard
+                budget={creditBudget()}
+                isClaudeTab={true}
+                spendTrajectory={makeTrajectory({ confidence: 'low' })}
+                topSpendConversations={[]}
+                conversations={[]}
+            />,
+        );
+        expect(screen.getByText(/^Estimating:/)).toBeTruthy();
+        expect(screen.getByText(/Need more data for confidence/)).toBeTruthy();
+    });
+
+    it('renders top spenders with subjects looked up from the conversations list', () => {
+        render(
+            <UsageBudgetCard
+                budget={creditBudget()}
+                isClaudeTab={true}
+                spendTrajectory={makeTrajectory()}
+                topSpendConversations={makeSpenders()}
+                conversations={makeConversations()}
+            />,
+        );
+        expect(screen.getByText('Top conversations this month')).toBeTruthy();
+        expect(screen.getByText('Refactor auth middleware')).toBeTruthy();
+        expect(screen.getByText('Q2 hiring plan draft')).toBeTruthy();
+        // conv-C has no matching ConversationRecord in the join: fallback subject.
+        expect(screen.getByText('Untitled conversation')).toBeTruthy();
+    });
+
+    it('renders cost and turn count for each spender', () => {
+        render(
+            <UsageBudgetCard
+                budget={creditBudget()}
+                isClaudeTab={true}
+                spendTrajectory={makeTrajectory()}
+                topSpendConversations={makeSpenders()}
+                conversations={makeConversations()}
+            />,
+        );
+        expect(screen.getByText('$94.12')).toBeTruthy();
+        expect(screen.getByText('$42.80')).toBeTruthy();
+        expect(screen.getByText('$21.50')).toBeTruthy();
+        expect(screen.getByText('18 turns')).toBeTruthy();
+        expect(screen.getByText('11 turns')).toBeTruthy();
+        expect(screen.getByText('6 turns')).toBeTruthy();
+    });
+
+    it('hides the top-spenders section when the list is empty', () => {
+        render(
+            <UsageBudgetCard
+                budget={creditBudget()}
+                isClaudeTab={true}
+                spendTrajectory={makeTrajectory()}
+                topSpendConversations={[]}
+                conversations={[]}
+            />,
+        );
+        expect(screen.queryByText('Top conversations this month')).toBeNull();
+    });
+
+    it('does not render trajectory copy on the session variant', () => {
+        render(
+            <UsageBudgetCard
+                budget={sessionBudget()}
+                isClaudeTab={true}
+                spendTrajectory={makeTrajectory()}
+                topSpendConversations={makeSpenders()}
+                conversations={makeConversations()}
+            />,
+        );
+        expect(screen.queryByText(/On track for/)).toBeNull();
+        expect(screen.queryByText(/Need 7\+ days of usage/)).toBeNull();
+        expect(screen.queryByText('Top conversations this month')).toBeNull();
     });
 });

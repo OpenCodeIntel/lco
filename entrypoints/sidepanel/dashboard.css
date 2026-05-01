@@ -733,6 +733,89 @@ body {
     color: var(--lco-text-muted);
 }
 
+/* Trajectory line on the credit card: "On track for $312 of $500 by Apr 30."
+   Sits directly under .lco-dash-budget-status, smaller and muted to keep
+   the primary status line as the hero. The "need more data" placeholder uses
+   the same class — italics give it a softer, less load-bearing voice. */
+.lco-dash-budget-trajectory {
+    margin: -8px 0 12px;
+    font-size: 12px;
+    color: var(--lco-text-muted);
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Top-spenders expandable list. Mirrors the History row pattern visually
+   without inheriting its hover/animation behavior — these rows are summary
+   data, not navigable items. */
+.lco-dash-budget-spenders {
+    margin-top: 10px;
+    border-top: 1px solid var(--lco-border);
+    padding-top: 8px;
+}
+
+.lco-dash-budget-spenders-summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--lco-text-muted);
+    list-style: none;
+    user-select: none;
+    padding: 2px 0;
+}
+
+.lco-dash-budget-spenders-summary::-webkit-details-marker {
+    display: none;
+}
+
+.lco-dash-budget-spenders-summary::before {
+    content: '▸';
+    display: inline-block;
+    margin-right: 6px;
+    transition: transform 0.15s ease;
+}
+
+.lco-dash-budget-spenders[open] .lco-dash-budget-spenders-summary::before {
+    transform: rotate(90deg);
+}
+
+.lco-dash-budget-spenders-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.lco-dash-budget-spender {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--lco-radius);
+    background: var(--lco-bg-card);
+    border: 1px solid var(--lco-border);
+    font-size: 12px;
+}
+
+.lco-dash-budget-spender-subject {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--lco-text);
+}
+
+.lco-dash-budget-spender-cost {
+    color: var(--lco-text);
+    font-family: var(--lco-font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+}
+
+.lco-dash-budget-spender-turns {
+    color: var(--lco-text-muted);
+    font-size: 11px;
+}
+
 /* ── Conversation list ──────────────────────────────────────────────────────── */
 
 .lco-dash-convlist {
@@ -1211,4 +1294,14 @@ body {
 }
 :root[data-density='compact'] .lco-dash-budget-resets {
     margin-top: 4px;
+}
+:root[data-density='compact'] .lco-dash-budget-trajectory {
+    margin: -6px 0 8px;
+}
+:root[data-density='compact'] .lco-dash-budget-spenders {
+    margin-top: 6px;
+    padding-top: 6px;
+}
+:root[data-density='compact'] .lco-dash-budget-spender {
+    padding: 4px 6px;
 }
