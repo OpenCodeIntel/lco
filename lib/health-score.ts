@@ -9,8 +9,19 @@
 //
 // ── How the score is computed (READ THIS BEFORE EDITING) ────────────────
 //
-// Two independent classifiers run in sequence, and the more severe of
-// the two wins:
+// A fresh-session guard runs first, then two independent classifiers run
+// in sequence and the more severe wins:
+//
+//   0. FRESH-SESSION GUARD. Any conversation with turnCount at or below
+//      FRESH_SESSION_TURN_CEIL AND contextPct strictly below
+//      FRESH_SESSION_CONTEXT_CEIL is Healthy unconditionally. This blocks
+//      stale state (growthRate from a prior conversation, leaked
+//      isDetailHeavy, future projection wrappers) from escalating a
+//      session that has no real history yet. The contract is "fresh =
+//      Healthy", measured against truth (real turn count, real context
+//      fill), not against derived signals. Wrappers like
+//      escalateForProjection still run on the returned HealthScore and
+//      can escalate it later if a real draft is active.
 //
 //   1. PRIMARY (per-model utilization). The conversation's context % is
 //      compared to model-specific warn / critical thresholds from
@@ -107,6 +118,27 @@ export const FAST_GROWTH_PCT = 8;
  */
 export const TURN_AWARE_WARN_OFFSET = 10;
 
+/**
+ * Fresh-session guard ceilings. A conversation at or below this turn
+ * count AND strictly below this context % is Healthy regardless of any
+ * derived signal (growthRate, isDetailHeavy, future projection wrappers).
+ *
+ * Rationale: the U-shaped attention research that drives every other rule
+ * here requires meaningful turn count and meaningful context fill to make
+ * a confident prediction. At zero or near-zero of both, every secondary
+ * signal is noise. We refuse to coach on noise. The ceilings come from
+ * GET-36 acceptance criteria: turnCount <= 2 AND contextPct < 30.
+ *
+ * The contextPct ceiling is exclusive on purpose. Any conversation that
+ * has reached 30% of the model's window has enough context fill that the
+ * per-model warn / critical thresholds (which start at 50% on the most
+ * conservative profile) deserve their full classifier pass. The turnCount
+ * ceiling is inclusive: a turn-2 reply on a brand-new chat is still
+ * indistinguishable from a turn-1 or turn-0 state for our purposes.
+ */
+export const FRESH_SESSION_TURN_CEIL = 2;
+export const FRESH_SESSION_CONTEXT_CEIL = 30;
+
 // ── Score computation ─────────────────────────────────────────────────────────
 
 export interface HealthInput {
@@ -143,6 +175,21 @@ export interface HealthInput {
  */
 export function computeHealthScore(input: HealthInput): HealthScore {
     const { contextPct, turnCount, growthRate, model, isDetailHeavy } = input;
+
+    // Rule 0 (fresh-session guard): a session with too few turns AND too
+    // little context fill cannot be in any rot zone we can confidently
+    // claim. Return Healthy before the secondary signals (growthRate,
+    // turn-count rules) get a chance to fire on noise. The model-aware
+    // coaching string still names the model so the copy stays consistent
+    // with what the user sees once the conversation matures.
+    if (turnCount <= FRESH_SESSION_TURN_CEIL && contextPct < FRESH_SESSION_CONTEXT_CEIL) {
+        return {
+            level: 'healthy',
+            label: 'Healthy',
+            coaching: getRotCoaching(model, contextPct, isDetailHeavy),
+            contextPct,
+        };
+    }
 
     const profile = getRotProfile(model);
     const thresholds = getEffectiveThresholds(model, isDetailHeavy);

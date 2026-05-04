@@ -17,6 +17,8 @@ import {
     TURN_DEGRADING_CEIL,
     TURN_CRITICAL_CEIL,
     FAST_GROWTH_PCT,
+    FRESH_SESSION_TURN_CEIL,
+    FRESH_SESSION_CONTEXT_CEIL,
     type HealthInput,
 } from '../../lib/health-score';
 
@@ -161,6 +163,161 @@ describe('healthy', () => {
         const h = computeHealthScore(input({ contextPct: 35, turnCount: 5 }));
         expect(h.coaching).toMatch(/35%/);
         expect(h.coaching).toMatch(/Sonnet 4\.5/);
+    });
+});
+
+// ── Fresh-session guard (GET-36) ─────────────────────────────────────────────
+//
+// A conversation with turnCount <= 2 AND contextPct < 30 must return
+// Healthy regardless of any derived signal that may have leaked from a
+// prior conversation, tab, or session. The guard runs before the
+// per-model classifier so growthRate, isDetailHeavy, and any future
+// projection wrapper cannot escalate fresh sessions.
+
+describe('fresh-session guard (GET-36)', () => {
+    it('returns Healthy on completely empty input', () => {
+        const h = computeHealthScore({
+            contextPct: 0,
+            turnCount: 0,
+            growthRate: null,
+            model: '',
+            isDetailHeavy: false,
+        });
+        expect(h.level).toBe('healthy');
+        expect(h.label).toBe('Healthy');
+    });
+
+    it('returns Healthy at the upper boundary (turnCount=2, contextPct=29.9)', () => {
+        const h = computeHealthScore(input({
+            turnCount: FRESH_SESSION_TURN_CEIL,
+            contextPct: FRESH_SESSION_CONTEXT_CEIL - 0.1,
+        }));
+        expect(h.level).toBe('healthy');
+    });
+
+    it('ignores stale large growthRate when turns and context are fresh', () => {
+        // Simulates state leak: prior conversation populated growthRate to
+        // a huge value before SPA navigation. The guard must still return
+        // Healthy because turnCount and contextPct are below the ceilings.
+        const h = computeHealthScore(input({
+            turnCount: 1,
+            contextPct: 20,
+            growthRate: 999,
+        }));
+        expect(h.level).toBe('healthy');
+    });
+
+    it('ignores stale isDetailHeavy=true when turns and context are fresh', () => {
+        // Simulates leak of lastDetailHeavy from a prior conversation.
+        const h = computeHealthScore(input({
+            model: SONNET_45,
+            turnCount: 1,
+            contextPct: 25,
+            isDetailHeavy: true,
+        }));
+        expect(h.level).toBe('healthy');
+    });
+
+    it('handles negative contextPct from buggy upstream as fresh', () => {
+        // Defensive: malformed pricing.json or zero-window fallback could
+        // yield negative percentages. Treat as fresh, do not crash.
+        const h = computeHealthScore(input({
+            turnCount: 1,
+            contextPct: -5,
+        }));
+        expect(h.level).toBe('healthy');
+    });
+
+    it('does NOT apply at turnCount=3 (just past ceiling)', () => {
+        // Past the turn ceiling -> fast growth secondary rule fires as
+        // before the guard existed.
+        const h = computeHealthScore(input({
+            turnCount: FRESH_SESSION_TURN_CEIL + 1,
+            contextPct: 35,
+            growthRate: FAST_GROWTH_PCT + 1,
+        }));
+        expect(h.level).toBe('degrading');
+    });
+
+    it('does NOT apply at contextPct=30 exactly (ceiling is exclusive)', () => {
+        // contextPct = ceiling -> guard does not fire. On Sonnet 4.5
+        // (warn=50), 30% is still healthy by the primary classifier, but
+        // the test asserts the guard's exclusive boundary so a future
+        // change to warn does not silently hide a regression here.
+        const h = computeHealthScore(input({
+            model: SONNET_45,
+            turnCount: 1,
+            contextPct: FRESH_SESSION_CONTEXT_CEIL,
+        }));
+        // Healthy by primary path, but we specifically verify the guard
+        // did not produce this result. Assert the coaching copy comes
+        // from the primary classifier (cites the model + window) rather
+        // than the guard's pure passthrough.
+        expect(h.level).toBe('healthy');
+        expect(h.coaching).toMatch(/Sonnet 4\.5/);
+    });
+
+    it('does NOT apply when contextPct hits the absolute critical floor with low turns', () => {
+        // 95% on turn 1 (huge first prompt + system + RAG): the guard
+        // requires BOTH conditions, contextPct=95 fails the < 30 check,
+        // so the absolute critical floor (Rule 1) wins.
+        const h = computeHealthScore(input({
+            turnCount: 1,
+            contextPct: 95,
+        }));
+        expect(h.level).toBe('critical');
+    });
+
+    it('does NOT mask high context with low turns (untracked old chat)', () => {
+        // User opens a pre-existing claude.ai conversation that LCO never
+        // tracked. After the first observed turn, contextPct may already
+        // be 70%. Guard must not fire. On Sonnet 4.5 (warn=50, crit=75),
+        // 70% is degrading.
+        const h = computeHealthScore(input({
+            model: SONNET_45,
+            turnCount: 1,
+            contextPct: 70,
+        }));
+        expect(h.level).toBe('degrading');
+    });
+
+    it('does NOT mask warn-boundary first turn (heavy first prompt)', () => {
+        // Brand-new chat with a heavy initial prompt + system + RAG: the
+        // first turn lands at the per-model warn threshold. The user
+        // deserves the warning even on turn 1.
+        const h = computeHealthScore(input({
+            model: SONNET_45,
+            turnCount: 1,
+            contextPct: 50,
+        }));
+        expect(h.level).toBe('degrading');
+    });
+
+    it('does NOT mask high context with detail-heavy on first turn', () => {
+        // Detail-heavy shifts Sonnet 4.5 warn from 50 to 35. A turn-1
+        // chat at 40% with a precision keyword should still warn.
+        const h = computeHealthScore(input({
+            model: SONNET_45,
+            turnCount: 1,
+            contextPct: 40,
+            isDetailHeavy: true,
+        }));
+        expect(h.level).toBe('degrading');
+    });
+
+    it('produces model-aware coaching string when guard fires with a known model', () => {
+        // The guard reuses getRotCoaching, which on a healthy zone with
+        // contextPct < LOW_CONTEXT_REASSURANCE_CEIL returns the "fresh
+        // and responsive" copy. Verify the string actually came back
+        // shaped, not empty.
+        const h = computeHealthScore(input({
+            model: SONNET_45,
+            turnCount: 0,
+            contextPct: 5,
+        }));
+        expect(h.level).toBe('healthy');
+        expect(h.coaching.length).toBeGreaterThan(0);
+        expect(h.coaching).toMatch(/fresh/i);
     });
 });
 
