@@ -19,6 +19,10 @@ export interface OverlayHandle {
     hideNudge(): void;
     /** Register the callback for the "Start fresh" button. Called once at setup. */
     onStartFresh(callback: () => void): void;
+    /** Force-hide the overlay regardless of render state. Used when the side
+     *  panel is open: it surfaces the same data with more detail, so the
+     *  in-page widget steps aside to avoid duplicated views and overlap. */
+    setSuppressed(value: boolean): void;
 }
 
 function fmt(n: number): string {
@@ -137,6 +141,21 @@ export function createOverlay(): OverlayHandle {
     let elWeeklyFill: HTMLElement | null = null;
     let elWeeklyLabel: HTMLElement | null = null;
     let elWeeklyEta: HTMLElement | null = null;
+
+    // Visibility state. shouldShow is a one-way latch flipped true by render()
+    // on first data arrival; suppressed is toggled externally by setSuppressed
+    // to defer to the side panel when it's open. applyVisibility reconciles
+    // both into the actual display style.
+    let shouldShow = false;
+    let suppressed = false;
+    function applyVisibility(): void {
+        if (!overlayWidget) return;
+        overlayWidget.style.display = (shouldShow && !suppressed) ? '' : 'none';
+    }
+    function setSuppressed(value: boolean): void {
+        suppressed = value;
+        applyVisibility();
+    }
 
     function mount(shadow: ShadowRoot): void {
         const style = document.createElement('style');
@@ -424,8 +443,11 @@ export function createOverlay(): OverlayHandle {
         if (!overlayWidget) return;
 
         // Reveal widget on first data arrival or when draft estimate is available.
-        if ((state.lastRequest !== null || state.draftEstimate !== null) && overlayWidget.style.display === 'none') {
-            overlayWidget.style.display = '';
+        // Routed through applyVisibility so suppressed (side panel open) wins
+        // over the data-arrival latch.
+        if (state.lastRequest !== null || state.draftEstimate !== null) {
+            shouldShow = true;
+            applyVisibility();
         }
 
         // Draft estimate: pre-submit cost preview.
@@ -677,5 +699,5 @@ export function createOverlay(): OverlayHandle {
         startFreshCallback = callback;
     }
 
-    return { mount, render, showNudge, hideNudge, onStartFresh };
+    return { mount, render, showNudge, hideNudge, onStartFresh, setSuppressed };
 }

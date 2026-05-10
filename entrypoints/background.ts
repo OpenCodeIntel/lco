@@ -85,6 +85,16 @@ if (typeof chrome !== 'undefined' && chrome.sidePanel) {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 }
 
+// chrome.storage.session defaults to TRUSTED_CONTEXTS, which excludes content
+// scripts entirely (reads return empty, onChanged never fires). The in-page
+// overlay reads sidePanelVisible from session storage to decide whether to
+// suppress itself, so we widen access to all contexts here. Persists across
+// service-worker restarts; safe to call on every boot.
+if (typeof chrome !== 'undefined' && chrome.storage?.session?.setAccessLevel) {
+    chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' })
+        .catch((err: unknown) => console.error('[LCO-ERROR] Failed to expose session storage to content scripts:', err));
+}
+
 // Storage Helpers
 
 /** Build the per-tab storage key for token state */
@@ -497,6 +507,24 @@ export default defineBackground({
 
         return true;
       }
+    });
+
+    // Side panel visibility signal. The side panel page connects on mount
+    // and its port disconnects when Chrome destroys the page (close pin, close
+    // window). We mirror the connection state into chrome.storage.session so
+    // the in-page overlay (claude-ai.content.ts) can suppress itself while
+    // the side panel is showing the same data with more detail.
+    // Service-worker termination also fires onDisconnect; the side panel
+    // reconnects on its end, which re-fires onConnect here and restores the
+    // flag within ~100ms.
+    browser.runtime.onConnect.addListener((port) => {
+        if (port.name !== 'side-panel') return;
+        browser.storage.session.set({ sidePanelVisible: true })
+            .catch((err) => console.error('[LCO-ERROR] Failed to mark side panel visible:', err));
+        port.onDisconnect.addListener(() => {
+            browser.storage.session.set({ sidePanelVisible: false })
+                .catch((err) => console.error('[LCO-ERROR] Failed to mark side panel hidden:', err));
+        });
     });
 
     // Detect when a tab navigates away from claude.ai (logout, redirect).
