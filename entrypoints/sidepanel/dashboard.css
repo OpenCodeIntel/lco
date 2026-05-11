@@ -550,16 +550,20 @@ body {
 }
 
 .lco-ticker-bars {
-    display: flex;
-    align-items: flex-end;
+    /* 12-column grid keeps each bar at a fixed 1/12 of the row width
+       regardless of how many turns have been tracked. The flex-based
+       earlier version made a single tracked turn stretch to fill the whole
+       row, which read as a solid orange wall rather than a per-turn
+       histogram. Grid column count must match maxBars in TurnTicker.tsx. */
+    display: grid;
+    grid-template-columns: repeat(12, minmax(2px, 1fr));
+    align-items: end;
     gap: 3px;
     flex: 1;
     height: 100%;
 }
 
 .lco-ticker-bar {
-    flex: 1;
-    min-width: 4px;
     min-height: 2px;
     background: var(--lco-accent);
     border-radius: 1px;
@@ -568,6 +572,17 @@ body {
     transition: height 360ms cubic-bezier(0.16, 1, 0.3, 1);
     will-change: height;
     cursor: default;
+}
+
+.lco-ticker-slot {
+    /* Placeholder rail for turn positions that haven't been filled yet.
+       Renders as a faint baseline so the row reads as "this will fill in
+       as the conversation grows" instead of empty negative space beside
+       the real bars. */
+    height: 2px;
+    background: var(--lco-border);
+    border-radius: 1px;
+    opacity: 0.6;
 }
 
 .lco-ticker-bar:focus-visible {

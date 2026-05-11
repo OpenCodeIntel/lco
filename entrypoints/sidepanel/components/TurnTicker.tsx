@@ -38,6 +38,13 @@ export default function TurnTicker({ turns, maxBars = 12 }: Props): React.ReactE
     const prev = window.length >= 2 ? window[window.length - 2] : null;
     const trend = computeTrend(prev?.deltaUtilization ?? null, last.deltaUtilization ?? null);
 
+    // Pad the row out to maxBars with faint placeholder slots. The grid in
+    // dashboard.css fixes each column to 1/maxBars of the row, so this stops
+    // a single tracked turn (or two) from stretching to fill the entire row
+    // and reading as a "solid orange wall". The empty slots also hint at
+    // "this fills in over time" rather than leaving raw empty space.
+    const emptySlots = Math.max(0, maxBars - window.length);
+
     return (
         <div
             className="lco-ticker"
@@ -58,6 +65,13 @@ export default function TurnTicker({ turns, maxBars = 12 }: Props): React.ReactE
                         />
                     );
                 })}
+                {Array.from({ length: emptySlots }, (_, i) => (
+                    <span
+                        key={`slot-${i}`}
+                        className="lco-ticker-slot"
+                        aria-hidden="true"
+                    />
+                ))}
             </div>
             {trend !== null && (
                 <span className={`lco-ticker-trend lco-ticker-trend--${trend.direction}`}>
