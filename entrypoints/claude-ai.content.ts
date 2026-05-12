@@ -752,6 +752,21 @@ async function initializeMonitoring(): Promise<void> {
     const shadow = host.attachShadow({ mode: 'closed' });
     overlay.mount(shadow);
 
+    // Side panel visibility: background writes sidePanelVisible to
+    // chrome.storage.session via its onConnect listener. Suppress the in-page
+    // overlay while the side panel is showing the same data, so the user
+    // isn't shown two competing views. Read once on startup, then watch for
+    // changes for the rest of the page lifetime.
+    browser.storage.session.get('sidePanelVisible')
+        .then((data) => { overlay.setSuppressed(data.sidePanelVisible === true); })
+        .catch(() => { /* non-critical: default unsuppressed if read fails */ });
+    browser.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'session') return;
+        if ('sidePanelVisible' in changes) {
+            overlay.setSuppressed(changes.sidePanelVisible.newValue === true);
+        }
+    });
+
     // "Start fresh" flow: build handoff summary, copy to clipboard, navigate to new chat.
     overlay.onStartFresh(async () => {
         try {

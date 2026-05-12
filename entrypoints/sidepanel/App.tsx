@@ -15,7 +15,7 @@
 // the budget data to explain why the section is empty. Today and History are
 // org-scoped historical data and remain visible at all times.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useDashboardData } from './hooks/useDashboardData';
 import Header from './components/Header';
 import CollapsibleSection from './components/CollapsibleSection';
@@ -45,6 +45,34 @@ export default function App() {
     // The drawer component lands in the next commit; for now the trigger
     // toggles state and renders nothing.
     const [settingsOpen, setSettingsOpen] = useState(false);
+
+    // Hold a port to the background while this side panel page is alive.
+    // Background mirrors the connection state into chrome.storage.session as
+    // sidePanelVisible; the in-page overlay watches that flag and suppresses
+    // itself while we're showing the same data here in more detail.
+    // The port disconnects automatically when Chrome destroys this page
+    // (panel close, window close); React cleanup is a belt-and-suspenders
+    // disconnect for normal unmount paths. Reconnects on disconnect to ride
+    // through service-worker idle restarts.
+    useEffect(() => {
+        let port: chrome.runtime.Port | null = null;
+        let alive = true;
+
+        const connect = () => {
+            if (!alive) return;
+            port = chrome.runtime.connect({ name: 'side-panel' });
+            port.onDisconnect.addListener(() => {
+                if (alive) setTimeout(connect, 100);
+            });
+        };
+
+        connect();
+
+        return () => {
+            alive = false;
+            port?.disconnect();
+        };
+    }, []);
 
     if (loading) {
         return (

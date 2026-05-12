@@ -83,7 +83,11 @@ export const OVERLAY_CSS = `
 
 .lco-widget {
   position: fixed;
-  bottom: 88px;
+  /* 88px sat at the level of claude.ai's composer textarea; 16px puts the
+     widget in the empty viewport corner below the composer footer text.
+     The "two surfaces showing the same data" overlap is handled separately
+     by setSuppressed() in ui/overlay.ts (driven by side panel state). */
+  bottom: 16px;
   right: 16px;
   z-index: 2147483647;
   min-width: 210px;
