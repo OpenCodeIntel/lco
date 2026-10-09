@@ -161,4 +161,4 @@ During streaming, counts use `chars / 4` — a rough approximation. The accurate
 bun run zip
 ```
 
-This produces a `.zip` in `.output/` suitable for Chrome Web Store submission. The Chrome Web Store release is not yet live — see the README for current status.
+This produces a `.zip` in `.output/` suitable for Chrome Web Store submission. Saar is listed on the Chrome Web Store: https://chromewebstore.google.com/detail/saar/akkeaanajakflhgbipepimggmlnocaoo

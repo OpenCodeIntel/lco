@@ -43,7 +43,7 @@ export default function Hero() {
             </div>
 
             <p className="mt-6 text-saar-muted text-xs font-mono">
-              136 commits{' · '}1,452 tests{' · '}live on Chrome Web Store
+              280 commits{' · '}1,808 tests{' · '}live on Chrome Web Store
             </p>
           </div>
 
