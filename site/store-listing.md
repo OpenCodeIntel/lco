@@ -64,7 +64,7 @@ https://getsaar.com
 This extension intercepts the SSE stream on claude.ai to read token usage
 data that Claude's web UI discards. Specifically:
 
-1. A sandboxed IIFE script (inject.js, a web-accessible resource) is added
+1. A page-context IIFE script (inject.js, a web-accessible resource) is added
    to the page by the content script at document_start to wrap
    window.fetch and tee the response stream. The tee is read-only;
    the original stream is passed through to claude.ai unmodified.
