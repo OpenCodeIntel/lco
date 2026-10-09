@@ -3,7 +3,7 @@ const surfaces = [
     n: '01',
     name: 'Chrome extension',
     status: 'shipped',
-    detail: '136 commits / 1,452 tests / live on CWS',
+    detail: '280 commits / 1,808 tests / live on CWS',
     accent: true,
   },
   {
