@@ -9,7 +9,7 @@ export default function PrivacyPage() {
   return (
     <div className="max-w-2xl mx-auto px-6 py-16">
       <h1 className="font-serif text-4xl text-saar-text mb-2">Privacy Policy</h1>
-      <p className="text-saar-muted text-sm mb-12">Saar: Last updated April 2026</p>
+      <p className="text-saar-muted text-sm mb-12">Saar: Last updated October 2026</p>
 
       <section className="mb-8">
         <h2 className="text-saar-text font-medium text-lg mb-3">Summary</h2>
@@ -57,10 +57,6 @@ export default function PrivacyPage() {
           <li>
             <strong className="text-saar-text">tabs</strong> — identifies which tab a token count
             belongs to so session totals stay per-tab.
-          </li>
-          <li>
-            <strong className="text-saar-text">scripting</strong> — injects the stream interceptor
-            into claude.ai at page load.
           </li>
           <li>
             <strong className="text-saar-text">alarms</strong> — schedules periodic cleanup of
