@@ -3,7 +3,7 @@ const surfaces = [
     n: '01',
     name: 'Chrome extension',
     status: 'shipped',
-    detail: '280 commits / 1,808 tests / live on CWS',
+    detail: '1,808 tests / live on CWS',
     accent: true,
   },
   {
@@ -17,14 +17,14 @@ const surfaces = [
     n: '03',
     name: 'Tauri desktop',
     status: 'Q1 2027',
-    detail: 'Menu-bar app / Claude Desktop + Cursor + Claude Code',
+    detail: 'Menu-bar app / Claude Desktop + Claude Code',
     accent: false,
   },
   {
     n: '04',
     name: 'Teams plan',
     status: '2027+',
-    detail: '$8 / user / mo / token analytics across providers',
+    detail: '$8 / user / mo / team token analytics',
     accent: false,
   },
 ]

@@ -155,14 +155,11 @@ See [SETUP.md](SETUP.md) for troubleshooting.
 
 ## What's next
 
-Claude-only right now. Multi-provider is the point.
+Saar works on Claude.ai only. Next on the list:
 
-- **ChatGPT adapter:** same architecture, different endpoint
 - **Coaching nudges:** tell you when to start a new chat, not just how full you are
 - **Cross-session history:** token trends over time, not just per-browser-session data that clears on close
 - **Firefox**
-
-If your workflow touches more than one AI tool, Saar should cover all of them.
 
 ---
 

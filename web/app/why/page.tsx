@@ -72,8 +72,7 @@ export default function WhyPage() {
 
           <p>
             That&apos;s Wave 1. Wave 2 is an MCP server on the Anthropic registry and a
-            Tauri menu-bar app that watches Claude Desktop, Cursor, and Claude Code
-            simultaneously. The distribution channel for Wave 2 is governed by the
+            Tauri menu-bar app that watches Claude Desktop and Claude Code. The distribution channel for Wave 2 is governed by the
             Agentic AI Foundation, a Linux Foundation project co-founded by Anthropic,
             OpenAI, and Block. Even if Anthropic wanted to sherlock us, the registry
             they&apos;d have to kick us off is one they share with their competitors.

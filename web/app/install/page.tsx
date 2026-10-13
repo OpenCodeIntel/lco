@@ -38,9 +38,9 @@ export default function InstallPage() {
 
           <div className="mt-6 grid grid-cols-3 gap-4 max-w-sm">
             {[
-              ['280', 'commits'],
               ['1,808', 'tests'],
-              ['63', 'merged PRs'],
+              ['100%', 'in-browser'],
+              ['MIT', 'license'],
             ].map(([value, label]) => (
               <div key={label} className="rounded-lg border border-saar-border bg-saar-card p-4 text-center">
                 <div className="font-mono text-lg font-bold text-saar-text">{value}</div>
@@ -59,8 +59,7 @@ export default function InstallPage() {
           </h2>
           <p className="text-saar-secondary text-lg leading-relaxed mb-4">
             The MCP server ships to the Anthropic registry in Q4 2026. The Tauri
-            menu-bar app ships Q1 2027. Both work across Claude Desktop, Cursor,
-            and Claude Code simultaneously.
+            menu-bar app ships Q1 2027. Both cover Claude Desktop and Claude Code.
           </p>
           <p className="text-saar-muted text-sm mb-8">
             Leave your email and you&apos;ll get one message when they ship. No newsletter.
